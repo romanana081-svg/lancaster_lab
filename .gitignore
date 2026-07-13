@@ -1,0 +1,47 @@
+# NOTE: this file is itself TRACKED (D-001). It previously contained the line
+# `.gitignore`, which made it ignore itself — so it never reached a clean clone,
+# and neither did any of the protections below.
+
+# Real participant data NEVER enters this repository (DESIGN.md §8).
+data/
+
+# Generated analysis outputs. Report *sources* are tracked; rendered artifacts are not.
+reports/**
+!reports/**/
+!reports/**/*.Rmd
+!reports/**/*.qmd
+!reports/**/*.md
+!reports/.gitkeep
+
+# Anything that could carry controlled-tier content out of the Workbench.
+# The R -> Python contract file (D-005) is DATA, not code: it never gets committed.
+*.parquet
+*.feather
+phenotypes_v*.csv
+*_phenotypes*.csv
+*_phenotypes_formatted*.csv
+
+# Credentials.
+*.pem
+*.key
+service-account*.json
+.env
+.Renviron
+fixture/build/queries/secret.txt
+
+# The fixture's regenerable DuckDB binary is ignored by fixture/.gitignore, not here.
+# fixture/bucket/ IS tracked on purpose: it is synthetic, and it is the offline test substrate.
+
+# Tooling noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.Rhistory
+.RData
+.Rproj.user/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db

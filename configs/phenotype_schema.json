@@ -1,0 +1,122 @@
+{
+  "$comment": [
+    "THE CONTRACT between the R half (src/phenotype) and the Python half (src/aou_ascvd). D-005.",
+    "Validated on WRITE (R) and on READ (Python). A violation RAISES — never a warning, never a",
+    "coerced value, never a silently-dropped row. The whole point is to turn silent corruption into",
+    "a loud stop. Specification and rationale: VALIDATION.md §3.",
+    "",
+    "v1 describes what the EXISTING notebook ETL actually produces (see fixture/expected/answer_key.csv).",
+    "It is deliberately NOT the set of columns the study needs: PREVENT requires total cholesterol,",
+    "HDL-C, systolic BP, antihypertensive use, diabetes, smoking, and eGFR, and the current pipeline",
+    "extracts NONE of them. That gap is the single largest implementation task in the project (T-003,",
+    "D-004), and it is recorded here rather than hidden — see 'required_for_prevent_not_yet_extracted'."
+  ],
+
+  "schema_version": 1,
+  "primary_key": "person_id",
+  "grain": "exactly one row per person_id",
+
+  "table_level_checks": [
+    "person_id is unique and non-null",
+    "column set matches this schema exactly - no extra, no missing",
+    "row count equals the cohort count from the attrition table",
+    "no column is fully null",
+    "date_of_birth precedes every event date in the same row"
+  ],
+
+  "columns": {
+    "person_id": {
+      "type": "int64",
+      "nullable": false,
+      "unique": true,
+      "description": "All of Us participant identifier.",
+      "$comment": "Fixture defect A5 seeds a NULL person_id, and A4 a duplicated person row that multiplies rows across the entire join (participant 1000026). Both are real; both must fail validation here rather than downstream."
+    },
+
+    "date_of_birth": {
+      "type": "date",
+      "nullable": false,
+      "description": "From demo_df; the left-most table in the join.",
+      "$comment": "Fixture defect A3 (participant 1000023) has a DOB AFTER the events, producing negative ages. The non-negative-age check is not hypothetical."
+    },
+    "race": {
+      "type": "string",
+      "nullable": true,
+      "permitted_null_tokens": ["PMI: Skip", "None Indicated", "I prefer not to answer"],
+      "description": "Self-reported. NOT a substitute for genetic ancestry.",
+      "$comment": "PREVENT is deliberately race-free (D-004). This column exists for reporting and for stratified validation (T-007), NOT as a model input. Genetic ancestry PCs are a separate thing and must not be conflated with this."
+    },
+    "sex_at_birth": {
+      "type": "string",
+      "nullable": false,
+      "permitted": ["Male", "Female"],
+      "description": "PREVENT has sex-specific coefficient sets, so this is required, not optional."
+    },
+
+    "LDL": {
+      "type": "float64",
+      "unit": "mg/dL",
+      "nullable": true,
+      "min": 1,
+      "max": 1000,
+      "description": "Earliest LDL-C. Unit and bounds from configs/config.yaml.",
+      "$comment": "A-004: the notebook additionally caps this at <400, which would delete untreated FH carriers - exactly the people this study is designed to find. The cap is NOT applied here. A-001: 'earliest' is probably the wrong anchor for a prediction study."
+    },
+    "Date_LDL_assessment": { "type": "date", "nullable": true },
+    "Age_at_LDL_assessment": { "type": "float64", "nullable": true, "min": 0, "max": 120 },
+    "LDL_measured_on_meds": {
+      "type": "int8",
+      "nullable": true,
+      "permitted": [0, 1],
+      "description": "Was the LDL draw after any_chol_med_start_date?",
+      "$comment": "KNOWN DEFECT, not yet fixed: this is contaminated by the any_chol_med bug below. A survey non-user gets any_chol_med=1 and a start date, which flips this from NA to 1. Fixture participant 1000014. T-005."
+    },
+
+    "BMI": { "type": "float64", "unit": "kg/m2", "nullable": true, "min": 14, "max": 60 },
+
+    "CAD_code":      { "type": "int8", "nullable": false, "permitted": [0, 1],
+                       "$comment": "A-006: 0 means 'no code found', NOT 'confirmed disease-free'. This is non-random outcome misclassification and it tracks healthcare access (Q-A2)." },
+    "CAD_code_date": { "type": "date", "nullable": true, "$comment": "Earliest CAD event: ICD conditions and CPT procedures unioned, then re-reduced to earliest per person." },
+    "CAD_age":       { "type": "float64", "nullable": true, "min": 0, "max": 120 },
+
+    "PAD_code":   { "type": "int8", "nullable": false, "permitted": [0, 1] },
+    "FH_code":    { "type": "int8", "nullable": false, "permitted": [0, 1], "description": "Familial hypercholesterolemia diagnosis code." },
+    "CADFH_code": { "type": "int8", "nullable": false, "permitted": [0, 1], "description": "Family history of CAD (survey)." },
+    "HC_code":    { "type": "int8", "nullable": false, "permitted": [0, 1], "description": "Hypercholesterolemia diagnosis code." },
+
+    "any_chol_med": {
+      "type": "int8",
+      "nullable": false,
+      "permitted": [0, 1],
+      "description": "Statin, non-statin lipid-lowering drug, or self-reported use.",
+      "$comment": "KNOWN DEFECT (fixture finding 1, participant 1000014): meds_df contains everyone who ANSWERED the statin survey, including those who answered 'No'. The collapse `any_chol_med[!is.na(...)] <- 1` treats the string 'no' as present-and-therefore-yes, so NON-USERS ARE SCORED AS USERS. It cascades into LDL_measured_on_meds. The fixture asserts the BUGGY behaviour on purpose so it cannot be fixed by accident or reintroduced silently. Fix in T-005; this comment comes out when the assertion flips."
+    },
+    "any_chol_med_start_date": { "type": "date", "nullable": true },
+
+    "censor_type": {
+      "type": "int8",
+      "nullable": false,
+      "permitted": [1, 2, 3],
+      "description": "1 = no CAD code; 2 = CAD code precedes first visit; 3 = CAD code after first visit.",
+      "$comment": "From the notebook's IN PROGRESS `# Get censored ages` section. Type 2 is the prevalent-disease case and is exactly the group PREVENT is undefined for (DESIGN §2) - which is why this section is load-bearing, not scratch work. Fixture participant 1000024 has a CAD code and ZERO visits, which breaks censoring outright (defect A6)."
+    },
+    "CAD_censored_date": { "type": "date", "nullable": true }
+  },
+
+  "required_for_prevent_not_yet_extracted": {
+    "$comment": [
+      "PREVENT's inputs (D-004). The current ETL extracts only BMI, age, and sex from this list.",
+      "Listed here so the gap is visible in the contract itself rather than discovered at T-006.",
+      "Adding each of these is T-003; each needs fixture coverage (T-004) before it can be trusted."
+    ],
+    "total_cholesterol": { "unit": "mg/dL",     "status": "NOT EXTRACTED" },
+    "hdl_c":             { "unit": "mg/dL",     "status": "NOT EXTRACTED" },
+    "systolic_bp":       { "unit": "mmHg",      "status": "NOT EXTRACTED" },
+    "antihypertensive_use": { "type": "bool",   "status": "NOT EXTRACTED" },
+    "diabetes":          { "type": "bool",      "status": "NOT EXTRACTED" },
+    "current_smoking":   { "type": "bool",      "status": "NOT EXTRACTED" },
+    "egfr":              { "unit": "mL/min/1.73m2", "status": "NOT EXTRACTED",
+                           "$comment": "Requires serum creatinine plus the CKD-EPI 2021 (race-free) equation." },
+    "statin_use":        { "type": "bool",      "status": "PARTIAL - see the any_chol_med defect above" }
+  }
+}

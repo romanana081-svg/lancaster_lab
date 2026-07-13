@@ -1,0 +1,143 @@
+# config.yaml — ALL parameters. No hard-coded paths, thresholds, or concept IDs in code.
+#
+# Every value here is a *scientific choice*, not an implementation detail. A threshold buried in
+# code is a choice nobody can review and nobody can tell you changed. If you find yourself typing a
+# number into a function, it belongs here instead (loop.md, rule 2).
+#
+# Entries marked `# FROZEN:` must not change once outcomes have been examined — changing them after
+# seeing results is the garden of forking paths, and it invalidates the p-value regardless of what
+# the number says (Q-G1, Q-G2, Q-S3).
+
+schema_version: 1
+
+# ---------------------------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------------------------
+# In the All of Us Workbench these come from injected env vars. Offline they point at fixture/.
+# Code reads the env var first and falls back to the fixture — never hard-code a gs:// path.
+environment:
+  workspace_cdr:     ${WORKSPACE_CDR}       # BigQuery CDR dataset (Workbench only)
+  workspace_bucket:  ${WORKSPACE_BUCKET}    # GCS bucket           (Workbench only)
+  google_project:    ${GOOGLE_PROJECT}      # BigQuery billing project
+  owner_email:       ${OWNER_EMAIL}
+  offline_fixture:   fixture/db/aou_fixture.duckdb
+  offline_bucket:    fixture/bucket
+
+# ---------------------------------------------------------------------------------------------
+# Cohort  (DESIGN §2 — two of these are NOT settled; see the status notes)
+# ---------------------------------------------------------------------------------------------
+cohort:
+  # The gate applied by all 13 generated queries. A-007: unverified against the published
+  # CDR v7 srWGS count (~245,394).
+  require_srwgs: true                       # has_whole_genome_variant = 1 in cb_search_person
+
+  age_min: 30                               # PREVENT's validated range
+  age_max: 79
+
+  # PREVENT is a PRIMARY PREVENTION model — it is undefined for people who already have ASCVD.
+  # Including prevalent cases inflates apparent prediction accuracy (DESIGN §2).
+  exclude_prior_ascvd: true
+
+  # OPEN — Q-S1. The convenient answer ("first visit with all PREVENT inputs") is the one that
+  # builds immortal time bias into the design. Do not default to it silently. BLOCKS T-002.
+  index_date: UNRESOLVED                    # first_complete_prevent | enrollment | fixed_date | age_scale
+
+  # OPEN — Q-A2. Absence of an EHR code is treated as absence of disease (A-006), and that
+  # assumption is weakest for people who barely appear in the EHR. Non-random misclassification.
+  min_followup_years: UNRESOLVED
+  min_visits: UNRESOLVED
+
+# ---------------------------------------------------------------------------------------------
+# Outcome  (OPEN — Q-A1, needs an advisor: H-003)
+# ---------------------------------------------------------------------------------------------
+# If our outcome is not the outcome PREVENT predicts, PREVENT's linear predictor is not a valid
+# offset for it, and the primary model (D-006) is undermined at the root.
+outcome:
+  definition: UNRESOLVED                    # prevent_composite | hard_ascvd | any_coronary_incl_revasc
+  horizon_years: 10                         # PREVENT provides both 10y and 30y
+  competing_risk: non_ascvd_death           # Fine-Gray sensitivity analysis (T-010)
+
+# ---------------------------------------------------------------------------------------------
+# Physiologic bounds  (A-004)
+# ---------------------------------------------------------------------------------------------
+# Values outside these are treated as data-entry errors. Inherited from the notebook — and one of
+# them is actively dangerous for this study.
+bounds:
+  ldl_mgdl:   { min: 1,  max: 1000 }
+  trig_mgdl:  { min: 1,  max: 1000 }
+  bmi_kgm2:   { min: 14, max: 60 }
+
+  # !! The notebook additionally caps LDL at < 400 mg/dL. DO NOT PORT THAT BOUND UNEXAMINED.
+  # Untreated familial hypercholesterolemia carriers routinely exceed 400 mg/dL, so the cap
+  # systematically deletes the strongest rare-variant carriers — precisely the people this study
+  # exists to detect. A-004 (🔴), revisit in T-003.
+  ldl_upper_cap_mgdl: REVISIT               # notebook value: 400
+
+# ---------------------------------------------------------------------------------------------
+# Units  (A-003)
+# ---------------------------------------------------------------------------------------------
+# The notebook filters `unit_source_value == 'mg/dL'` — case-sensitive and exact. A person whose
+# only lipid panel is recorded as `mg/dl` vanishes with no warning (fixture defect A1,
+# participant 1000021). Normalise; do not discard.
+units:
+  normalise_case: true                      # not yet implemented — T-003
+  strip_whitespace: true
+  accepted_lipid_units: ['mg/dL']
+  convert_mmol_l: true                      # convert rather than drop
+  mmol_l_to_mgdl_cholesterol: 38.67
+  mmol_l_to_mgdl_triglycerides: 88.57
+
+# ---------------------------------------------------------------------------------------------
+# Record selection  (A-001, A-002)
+# ---------------------------------------------------------------------------------------------
+record_selection:
+  # The notebook takes each person's EARLIEST record. For an aetiological LDLR study that was
+  # defensible. For a PREDICTION study it is probably WRONG: the correct anchor is the value at
+  # the index date. A-001 (🔴), resolve with Q-S1 in T-003.
+  strategy: REVISIT                         # notebook value: earliest
+
+  # A-002 is REFUTED as safe. `distinct(person_id, .keep_all = TRUE)` over SQL with no ORDER BY
+  # keeps an arbitrary row, so same-day duplicates make results non-reproducible between runs.
+  # Must become deterministic before anything is published. T-005.
+  same_day_tiebreak: UNRESOLVED             # mean | min | max | first_by_value
+
+# ---------------------------------------------------------------------------------------------
+# Genetics  (D-008 — PROPOSED, not accepted)
+# ---------------------------------------------------------------------------------------------
+# FROZEN BEFORE OUTCOMES ARE EXAMINED. These are the forking-paths parameters (Q-G1, Q-G2).
+genetics:
+  gene_set_mode: UNRESOLVED                 # prespecified | exome_wide | hierarchical  (Q-G1)
+
+  # The candidate pre-specified set. Confirmatory, well-powered, and it makes the positive
+  # control in A-009 meaningful: LDLR burden MUST associate with LDL, or the pipeline is broken.
+  prespecified_genes: [LDLR, APOB, PCSK9, LPA, APOA5, ANGPTL3, ANGPTL4]
+
+  maf_threshold: UNRESOLVED                 # 0.01 (low-frequency) | 0.001 (rare)   (Q-G2)
+  functional_mask: UNRESOLVED               # lof | lof_plus_damaging_missense | all_coding  (Q-G2)
+  aggregation: burden                       # scalar burden for the offset model; SKAT-O for discovery
+
+  ancestry_pcs: 10                          # A-011 — population stratification
+  exclude_related: true
+
+# ---------------------------------------------------------------------------------------------
+# Statistics  (D-006, D-007)
+# ---------------------------------------------------------------------------------------------
+statistics:
+  primary_model: M1                         # offset(PREVENT LP) + gamma * G ; test gamma = 0
+  offset_variant: UNRESOLVED                # published_lp | recalibrated_lp | both  (Q-S2)
+
+  # NRI is biased toward declaring improvement and is sensitive to these cut-points. Secondary
+  # endpoint only (D-007). FROZEN: pre-specify before any outcome model is fitted (Q-S3).
+  nri_thresholds: [0.05, 0.075, 0.20]
+
+  check_proportional_hazards: true          # Q-S5 — genetic effects may be stronger at younger ages
+  report: [discrimination, calibration, decision_curve, nri]
+
+# ---------------------------------------------------------------------------------------------
+# Output  (D-005 — immutable and versioned; a new version NEVER overwrites an old one)
+# ---------------------------------------------------------------------------------------------
+output:
+  phenotype_version: 1
+  phenotype_file: phenotypes_v{version}.parquet
+  schema: configs/phenotype_schema.json
+  overwrite: false                          # not a preference. a guarantee.

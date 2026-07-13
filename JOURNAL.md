@@ -1,0 +1,106 @@
+# JOURNAL.md
+
+A chronological log of work sessions. **Newest first.**
+
+This is the project's narrative memory: not *what the code does* (that is `DESIGN.md`) and not *why we
+chose it* (that is `DECISIONS.md`), but **what actually happened, what we learned, and what surprised
+us**. The surprises are the valuable part. In six months, the question "why did we stop trusting the
+earliest-value rule?" is answered here.
+
+Write an entry when a session ends, not when it succeeds. Failed attempts and dead ends are recorded —
+a dead end that is not written down gets explored twice.
+
+**Template**
+
+```
+## YYYY-MM-DD — <session title>
+**Did:**       what changed, concretely
+**Learned:**   what we now know that we did not before — especially anything surprising
+**Decided:**   any D-entries created (link them)
+**Next:**      the state the next session starts from
+```
+
+---
+
+## 2026-07-13 — Completing the documentation scaffold; two environment findings
+
+**Did:**
+- Wrote the six documents that `DESIGN.md`, `DECISIONS.md`, and `ASSUMPTIONS.md` had been
+  cross-referencing but which did not exist: `QUESTIONS.md`, `TASKS.md`, `VALIDATION.md`,
+  `handoff.md`, this file, and `loop.md`. Every `T-`, `Q-`, and `H-` identifier already cited in the
+  earlier documents now resolves to a real entry — a dangling cross-reference is a genuine defect in a
+  system whose entire purpose is memory.
+- Created the `configs/`, `sql/`, `src/`, `tests/`, `docs/`, `notebooks/`, `reports/`, and `data/`
+  skeleton from DESIGN §3.3, with `config.yaml` holding the parameters that are currently hard-coded
+  in the notebook.
+- Fixed `.gitignore`, which contained the line `.gitignore` — **it ignored itself**, so it would never
+  have reached a clean clone, and neither would the protections it encodes. D-001 called for this; it
+  had not actually been done.
+- Ran the fixture end-to-end: **green** — `26 pass, 1 reproduced-bug (expected), 0 unexpected
+  failure(s)`, matching what `fixture/README.md` documents.
+
+**Learned — two things about the machine, both of which change a written record:**
+
+1. **R is installed.** D-002 states, as a recorded cost of the bilingual decision, that "R is not
+   currently installed on the development machine — nothing R-based can be tested locally until it is",
+   and `handoff.md` H-001 existed to track that. **This is false.** R 4.6.0 and 4.3.2 are both present
+   under `C:\Program Files\R\`, and **`tidyverse` is installed**. R is simply not on `PATH`, which is
+   what made it look absent. `bigrquery` is genuinely missing, but it is only needed for the "Do once"
+   BigQuery cells, which run inside the Workbench anyway — so it does not block offline work.
+
+   The consequence is not cosmetic: the R half of the pipeline is **testable locally right now**, which
+   is the precondition for T-005 (lifting the notebook's cleaning logic into a tested `src/phenotype/`
+   package). A blocker that was written down as real turned out to be a `PATH` entry. H-001 is closed
+   and D-002's stated cost has been annotated rather than rewritten.
+
+2. **Python is also not on `PATH`** (3.13.7 lives under `%LOCALAPPDATA%\Programs\Python\`, with
+   `duckdb` available). The fixture's documented commands (`py fixture/build/...`) therefore do not run
+   as written in a fresh shell. Recorded in `docs/environment.md` with the working invocations, because
+   an environment quirk that is not written down is rediscovered by the next person at the cost of an
+   afternoon.
+
+**Also learned, from reading the fixture's own evidence:** the fixture is doing more work than a test
+suite usually does. It does not merely check the pipeline — it **encodes two known bugs as assertions**
+so they cannot be fixed by accident or reintroduced silently: the `any_chol_med` survey-non-user defect
+(participant `1000014`, who says "No" to statins and is scored as a user), and the non-deterministic
+same-day tie-break (asserted as `one_of:130|131|132`, because the generated SQL has no `ORDER BY` and
+the surviving row is genuinely arbitrary). That is why the expected result is "1 reproduced-bug", not
+"27 pass". Both are now carried forward as completion criteria on T-005.
+
+**Decided:** no new `D-` entries. D-002 gains a dated correction on the R-availability point; the
+decision itself is unchanged and, per the append-only rule, nothing was deleted.
+
+**Next:** T-012 (audit the notebook's committed outputs for controlled-tier data) is the P0 item — it
+needs no human, no credentials, and no unresolved question, and it gates any push to a non-private
+remote. Everything on the analysis path runs through T-002, which is blocked on H-003: an advisor must
+settle the outcome definition (Q-A1) and the index date (Q-S1). The most useful preparation for that
+conversation is to **bring numbers** — the eligible-N, event count, and missingness under each candidate
+definition — rather than only questions.
+
+---
+
+## 2026-07-12 — The synthetic CDR fixture *(recorded retroactively)*
+
+**Did:** Built `fixture/` — a DuckDB stand-in for the All of Us OMOP CDR (spec in `FORMAT.md`): 300
+participants, 191 in the srWGS cohort, 27 hand-authored scenario participants, a deliberately dirty
+dataset, and an answer key. `export.py` runs the **13 SQL queries lifted verbatim from the notebook**,
+and a `gsutil` shim lets the notebook's own reader work unmodified against a fake bucket.
+
+**Learned:** Running the notebook's real SQL — rather than paraphrasing it — was the decision that paid
+off, and it paid off twice:
+
+- **`any_chol_med` is wrong for survey non-users.** `meds_df` includes everyone who *answered* the
+  statin survey, "No" included. The collapse `pheno_df2$any_chol_med[!is.na(...)] <- 1` treats the
+  string `'no'` as present-and-therefore-yes. Non-users are scored as users, and it cascades into
+  `LDL_measured_on_meds`.
+- **The same-day duplicate tie-break is not deterministic.** `distinct(person_id, .keep_all = TRUE)`
+  keeps whichever row arrives first, and the SQL has no `ORDER BY`. Results are not bit-reproducible.
+
+Neither bug would have been found by mocking data frames, because both live in the seam between the SQL
+and the cleaning code. This is the argument for D-003, and it is now an argument backed by evidence
+rather than by principle.
+
+**Decided:** D-003 (the fixture is the offline test substrate), recorded retroactively.
+
+**Next:** the documentation scaffold, and a home for these findings — which became A-002 and the
+`any_chol_med` note in `FORMAT.md` §7.3.
