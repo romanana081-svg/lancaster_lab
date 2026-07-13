@@ -1,0 +1,47 @@
+#!/bin/sh
+# Offline stand-in for `gsutil`, so the notebook's read_bq_export_from_workspace_bucket()
+# runs unmodified against the fixture. Maps gs://<bucket>/<path> onto
+# <FIXTURE_BUCKET_ROOT>/<bucket>/<path>.
+#
+# Supports only the two subcommands the notebook uses: `ls` and `cat`.
+#
+# Usage:  export PATH="$(pwd)/fixture/build:$PATH"
+#         export FIXTURE_BUCKET_ROOT="$(pwd)/fixture/bucket"
+
+: "${FIXTURE_BUCKET_ROOT:?set FIXTURE_BUCKET_ROOT to the fixture/bucket directory}"
+
+resolve() {
+    printf '%s' "$1" | sed "s#^gs://#${FIXTURE_BUCKET_ROOT}/#"
+}
+
+cmd="$1"
+shift
+
+case "$cmd" in
+    ls)
+        for arg in "$@"; do
+            pattern="$(resolve "$arg")"
+            # `find` rather than shell glob expansion: the fixture path can contain
+            # spaces (e.g. under OneDrive), which word-splits an unquoted glob.
+            find "$(dirname "$pattern")" -maxdepth 1 -name "$(basename "$pattern")" 2>/dev/null \
+                | sort \
+                | sed "s#^${FIXTURE_BUCKET_ROOT}/#gs://#"
+        done
+        ;;
+    cat)
+        for arg in "$@"; do
+            cat "$(resolve "$arg")"
+        done
+        ;;
+    cp)
+        # The notebook checkpoints intermediate frames with `gsutil cp`. Both
+        # directions are just a local copy here.
+        src="$(resolve "$1")"; dst="$(resolve "$2")"
+        mkdir -p "$(dirname "$dst")" 2>/dev/null
+        cp -r "$src" "$dst"
+        ;;
+    *)
+        echo "gsutil shim: unsupported subcommand '$cmd'" >&2
+        exit 1
+        ;;
+esac

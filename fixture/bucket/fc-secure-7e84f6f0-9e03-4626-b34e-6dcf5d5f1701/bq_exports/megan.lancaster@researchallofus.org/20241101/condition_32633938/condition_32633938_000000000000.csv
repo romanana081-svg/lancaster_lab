@@ -1,0 +1,12 @@
+person_id,condition_concept_id,standard_concept_name,standard_concept_code,standard_vocabulary,condition_start_datetime,condition_end_datetime,condition_type_concept_id,condition_type_concept_name,stop_reason,visit_occurrence_id,visit_occurrence_concept_name,condition_source_value,condition_source_concept_id,source_concept_name,source_concept_code,source_vocabulary,condition_status_source_value,condition_status_concept_id,condition_status_concept_name
+1000284,317309,Peripheral arterial disease,317309,SNOMED,2017-05-05 00:00:00,2017-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000261,317309,Peripheral arterial disease,317309,SNOMED,2011-05-05 00:00:00,2011-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000241,317309,Peripheral arterial disease,317309,SNOMED,2011-05-05 00:00:00,2011-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000186,317309,Peripheral arterial disease,317309,SNOMED,2013-05-05 00:00:00,2013-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000152,317309,Peripheral arterial disease,317309,SNOMED,2012-05-05 00:00:00,2012-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000135,317309,Peripheral arterial disease,317309,SNOMED,2021-05-05 00:00:00,2021-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000121,317309,Peripheral arterial disease,317309,SNOMED,2019-05-05 00:00:00,2019-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000087,317309,Peripheral arterial disease,317309,SNOMED,2014-05-05 00:00:00,2014-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000077,317309,Peripheral arterial disease,317309,SNOMED,2014-05-05 00:00:00,2014-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000044,317309,Peripheral arterial disease,317309,SNOMED,2019-05-05 00:00:00,2019-05-05 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated
+1000018,317309,Peripheral arterial disease,317309,SNOMED,2013-01-01 00:00:00,2013-01-01 00:00:00,32817,EHR,,,,I73.9,317309,Peripheral arterial disease,317309,SNOMED,,0,None Indicated

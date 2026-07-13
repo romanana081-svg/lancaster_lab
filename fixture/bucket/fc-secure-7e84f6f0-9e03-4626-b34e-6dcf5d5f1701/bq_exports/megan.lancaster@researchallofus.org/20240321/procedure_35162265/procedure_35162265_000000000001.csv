@@ -1,0 +1,5 @@
+person_id,procedure_concept_id,standard_concept_name,standard_concept_code,standard_vocabulary,procedure_datetime,procedure_type_concept_id,procedure_type_concept_name,modifier_concept_id,modifier_concept_name,quantity,visit_occurrence_id,visit_occurrence_concept_name,procedure_source_value,procedure_source_concept_id,source_concept_name,source_concept_code,source_vocabulary,modifier_source_value
+1000251,4336464,Percutaneous coronary intervention,415070008,SNOMED,2021-12-26 00:00:00,32817,EHR,0,None Indicated,1,,,92941,2107227,Coronary procedure 2107227,92957,CPT4,
+1000044,4336464,Percutaneous coronary intervention,415070008,SNOMED,2015-03-24 00:00:00,32817,EHR,0,None Indicated,1,,,92941,2107244,Coronary procedure 2107244,92974,CPT4,
+1000003,4336464,Percutaneous coronary intervention,415070008,SNOMED,2016-08-22 00:00:00,32817,EHR,0,None Indicated,1,,,92941,2107216,Coronary procedure 2107216,92946,CPT4,
+1000040,4336464,Percutaneous coronary intervention,415070008,SNOMED,2021-09-04 00:00:00,32817,EHR,0,None Indicated,1,,,92941,43527995,Coronary procedure 43527995,92935,CPT4,

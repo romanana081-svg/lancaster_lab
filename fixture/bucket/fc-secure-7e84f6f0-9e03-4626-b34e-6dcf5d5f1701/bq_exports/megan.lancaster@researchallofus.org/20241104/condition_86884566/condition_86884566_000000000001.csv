@@ -1,0 +1,12 @@
+person_id,condition_concept_id,standard_concept_name,standard_concept_code,standard_vocabulary,condition_start_datetime,condition_end_datetime,condition_type_concept_id,condition_type_concept_name,stop_reason,visit_occurrence_id,visit_occurrence_concept_name,condition_source_value,condition_source_concept_id,source_concept_name,source_concept_code,source_vocabulary,condition_status_source_value,condition_status_concept_id,condition_status_concept_name
+1000097,437827,Hypercholesterolemia,13644009,SNOMED,2014-06-06 00:00:00,2014-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000092,437827,Hypercholesterolemia,13644009,SNOMED,2021-06-06 00:00:00,2021-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000071,437827,Hypercholesterolemia,13644009,SNOMED,2016-06-06 00:00:00,2016-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000070,437827,Hypercholesterolemia,13644009,SNOMED,2017-06-06 00:00:00,2017-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000060,437827,Hypercholesterolemia,13644009,SNOMED,2013-06-06 00:00:00,2013-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000057,437827,Hypercholesterolemia,13644009,SNOMED,2019-06-06 00:00:00,2019-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000049,437827,Hypercholesterolemia,13644009,SNOMED,2017-06-06 00:00:00,2017-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000043,437827,Hypercholesterolemia,13644009,SNOMED,2013-06-06 00:00:00,2013-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000035,437827,Hypercholesterolemia,13644009,SNOMED,2014-06-06 00:00:00,2014-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000033,437827,Hypercholesterolemia,13644009,SNOMED,2013-06-06 00:00:00,2013-06-06 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
+1000018,437827,Hypercholesterolemia,13644009,SNOMED,2013-03-01 00:00:00,2013-03-01 00:00:00,32817,EHR,,,,E78.00,35207060,Pure hypercholesterolemia,E78.00,ICD10CM,,0,None Indicated
