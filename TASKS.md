@@ -83,7 +83,17 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
   the answer key depends on them (`fixture/README.md`).
 
 ### T-005 — Refactor the notebook's R logic into a tested `src/phenotype/` package
-- **Status:** TODO · **Priority:** P1 · **Depends on:** —
+- **Status:** IN PROGRESS · **Priority:** P1 · **Depends on:** a decision on the tie-break (below)
+- **Progress 2026-07-14:** `src/phenotype/R/clean_measurement.R` now implements the six-step idiom
+  once, with every buried literal (units, bounds, anchor, tie-break) promoted to an argument.
+  **23 `testthat` tests pass** — the R half is tested locally for the first time (possible only because
+  H-001 turned out to be a non-blocker). Defaults are **bit-compatible with the notebook**: nothing is
+  silently improved. The tests pin the *known bugs* as well as the wanted behaviour, so neither can
+  change by accident — including the lowercase-`mg/dl` data loss (A-003) and the arbitrary tie-break.
+- **Still to do:** (a) **the tie-break decision** — `mean` / `median` / `min` / `max` are all
+  implemented and deterministic; *which one we adopt* is a scientific choice and is unresolved
+  (`configs/config.yaml: record_selection.same_day_tiebreak`); (b) the remaining domains (conditions,
+  drugs, survey, demographics, censoring); (c) the end-to-end fixture test.
 - **Why:** D-002 keeps the ETL in R precisely because it is validated; but validated logic living in a
   notebook cannot be imported, tested, or reused, and the notebook does not even execute cleanly
   top-to-bottom (CLAUDE.md). Moving it into a package is what turns "it worked once in the cloud" into
