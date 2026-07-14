@@ -22,6 +22,41 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-14 (later) — Two decisions taken; the tie-break is fixed
+
+**Did:** Put the two open decisions to the user and implemented both.
+
+- **D-009 — same-day duplicates are resolved by their MEAN.** This retires A-002, which was the
+  project's only outright *reproducibility* defect: the notebook's `distinct(person_id, .keep_all=T)`
+  over SQL with no `ORDER BY` kept an arbitrary row, so the LDL that reached the analysis for anyone
+  with same-day repeats could differ **between runs of the same code**. `clean_measurement()` now
+  defaults to `mean` and a test pins that default, so the arbitrary behaviour cannot creep back.
+  Min and max were rejected for a reason worth remembering: both impose a *systematic directional
+  bias* on the study's key exposure, and `min` would attenuate precisely the FH signal the study is
+  built to detect.
+- **D-010 — the hardcoded workspace identifiers stay.** Accepted as a limitation rather than fixed:
+  it is a low-severity disclosure (no participant data; the bucket is access-controlled), and removing
+  it would mean modifying a notebook the lab treats as validated *and* rebuilding the offline harness
+  everything else is tested against.
+
+**Learned / worth flagging:** the fixture's answer key still asserts `one_of:130|131|132` for
+participant `1000006`, and **that is still correct** — the *notebook* has not switched over to the
+package, so it still does the arbitrary thing. The temptation is to "update the test to match the new
+behaviour"; doing that now would assert a behaviour nothing in the pipeline actually has. The assertion
+tightens to `131` **when the ETL switches**, not when the function does. Recorded in D-009 and A-002 so
+the next session does not get it backwards.
+
+Also noted, because it will bite at T-003: **R's `arrow` package is not installed**, and D-005's
+contract is a *Parquet* file. CSV is not an acceptable fallback — D-005 rejects it precisely because it
+has no types.
+
+**Decided:** D-009, D-010. Q-R3 resolved, T-013 closed, A-002 resolved, A-014 accepted-as-limitation.
+
+**Next:** T-005's remaining domains (conditions, drugs, survey, demographics, censoring) and its
+end-to-end fixture test. The analysis path is still gated on H-003.
+
+---
+
 ## 2026-07-14 — T-012: the governance audit, and a risk that never existed
 
 **Did:** Ran T-012 — the P0 governance audit. Parsed `LDLR Get phenotypes.ipynb` as JSON rather than

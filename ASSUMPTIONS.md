@@ -57,9 +57,13 @@ adopt without noticing.
   131, 132. The generated SQL has **no `ORDER BY`**, so which row survives is arbitrary and can
   differ between runs. The fixture's answer key therefore asserts *membership* (`one_of:130|131|132`),
   not a value.
-- **If it's wrong:** results are not bit-reproducible. **This must be fixed with an explicit
-  deterministic tie-break** (e.g. order by value, or take the mean of same-day values) before any
-  analysis is published. Tracked in T-005.
+- **If it's wrong:** results are not bit-reproducible.
+- **✅ RESOLVED 2026-07-14 by D-009: take the MEAN of same-day values.** `clean_measurement()` now
+  defaults to `tiebreak = "mean"` and a test pins it, so the arbitrary behaviour cannot silently
+  return. The legacy `"first"` path survives only to replay the old pipeline, and it **warns**.
+  **Note the fixture's answer key still asserts `one_of:130|131|132`, and that is correct** — the
+  *notebook* has not switched over to the package yet, so it still does the arbitrary thing. The
+  assertion tightens to `131` at the point the ETL actually changes, not before (T-005).
 
 ### A-003 — Only `unit_source_value == 'mg/dL'` rows are usable lipid measurements
 - **Risk:** 🟠
@@ -182,7 +186,11 @@ adopt without noticing.
 
 ### A-014 — Hardcoded workspace identifiers in the notebook are safe to publish
 - **Risk:** 🟠 (governance, not science)
-- **Status:** **REFUTED as safe — the identifiers are real, and they are tracked in git**
+- **Status:** **ACCEPTED-AS-LIMITATION 2026-07-14 (D-010)** — the identifiers are real and are tracked
+  in git; we have decided to live with that rather than break the offline harness to remove them.
+  Two honest caveats, recorded in D-010: a colleague's institutional email will appear in a public
+  repo **and she has not been asked**; and this is cheap to reverse *now* (3 commits, no collaborators)
+  but needs `git filter-repo` once anyone has cloned.
 - **Where it bites:** 13 cells of `LDLR Get phenotypes.ipynb` hardcode the workspace GCS bucket and
   the owner's institutional email:
   `gs://fc-secure-7e84f6f0-9e03-4626-b34e-6dcf5d5f1701/bq_exports/megan.lancaster@researchallofus.org/…`

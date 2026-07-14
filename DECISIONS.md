@@ -214,6 +214,77 @@ question, and the answer must not depend on anyone's memory.
 
 ---
 
+## D-009 — Same-day duplicate measurements are resolved by taking their **mean**
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-14
+- **Context:** A-002 is **REFUTED as safe**. Every "Format" section of the notebook ends with
+  `distinct(person_id, .keep_all = TRUE)` after a `min(date)` filter, which keeps whichever row
+  happens to arrive first — and the generated SQL has **no `ORDER BY`**. So for anyone with more than
+  one measurement on their earliest date, the value that reaches the analysis is **arbitrary and can
+  differ between runs**. Results are not bit-reproducible today. The fixture proves it: participant
+  `1000006` has same-day LDL values of 130, 131, and 132, and the answer key can only assert
+  *membership* (`one_of:130|131|132`), not a value.
+- **Alternatives:**
+  1. *Keep `first` (status quo).* Zero work; results remain non-reproducible. Not viable for
+     publication.
+  2. *Mean of the same-day values.* Uses all the information; smooths assay measurement error.
+     Produces a value that was never literally observed.
+  3. *Median.* Robust to a single wild same-day outlier — but with the 2–3 repeats that are typical,
+     it is almost always identical to the mean, so the robustness rarely buys anything.
+  4. *Min.* Conservative for a risk factor, but it biases every person's LDL **downward** —
+     working directly against detecting the FH carriers this study exists to find.
+  5. *Max.* Biases upward, symmetrically.
+- **Reasoning:** the user chose the mean. Same-day repeats of a lab are best understood as repeated
+  measurements of one underlying quantity, so averaging them is the natural estimator and it uses all
+  the data. Min and max were rejected because both impose a *systematic directional bias* on the
+  study's key exposure variable; min in particular would attenuate the very signal we are testing for.
+  Median was rejected as near-identical to the mean at realistic repeat counts.
+- **Decision:** `same_day_tiebreak: mean`. `clean_measurement()` now defaults to `tiebreak = "mean"`.
+  The legacy `"first"` path is retained but **warns that it is not reproducible**.
+- **Expected impact:** results become bit-reproducible, which is a precondition for publishing
+  anything. Cost: the ETL no longer reproduces the notebook bit-for-bit, so the fixture's
+  `one_of:130|131|132` assertion must tighten to `131` **at the point where the pipeline switches over
+  to the package** — until then the notebook still uses `distinct()` and the fixture correctly asserts
+  the old behaviour. Do not change the answer key before the ETL actually changes.
+- **Links:** A-002; T-005; `configs/config.yaml`; `src/phenotype/R/clean_measurement.R`.
+
+---
+
+## D-010 — The hardcoded workspace identifiers stay; the risk is accepted, not fixed
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-14
+- **Context:** T-012's audit cleared the participant-data risk (A-012 — the notebook has **no outputs
+  at all**) but found a smaller one (A-014): the notebook hardcodes the workspace bucket UUID and the
+  owner's institutional email in 13 cells
+  (`gs://fc-secure-7e84f6f0-…/bq_exports/megan.lancaster@researchallofus.org/…`), and the fixture
+  mirrors those literals as ~24 tracked directory names.
+- **Alternatives:**
+  1. *Parameterise the paths and rewrite history.* The clean end state. But the notebook's "Format"
+     cells resolve those `gs://` paths as **literals**, and the fixture was deliberately built to
+     mirror them so the notebook runs **unmodified** offline — so notebook, fixture, and answer key
+     would all have to change together, and `verify.py` re-verified. It also cuts against CLAUDE.md's
+     rule that the notebook's quirks are load-bearing and must not be silently "fixed".
+  2. *Ask the lab / Megan first.*
+  3. *Leave it.*
+- **Reasoning:** the user chose to leave it. The exposure is **not** a data-policy breach: no
+  participant data, and the bucket is access-controlled, so the UUID is an identifier rather than a
+  credential. Weighed against that, option 1 means modifying a notebook the lab treats as validated and
+  rebuilding the offline harness that everything else is tested against — real risk, for a low-severity
+  disclosure.
+- **Decision:** leave the identifiers in place. Q-R3 is closed. A-014 becomes
+  **ACCEPTED-AS-LIMITATION** rather than an open item.
+- **Expected impact:** no work, no risk to the fixture. **Two things are worth being honest about:**
+  (a) a colleague's institutional email will appear in a public repository and she has not been asked;
+  (b) this decision is *cheap to reverse today* (3 commits, no collaborators) and gets materially more
+  expensive the moment anyone clones, because scrubbing the working tree does not scrub git history.
+  If either of those matters later, reversing this is a `git filter-repo` job — reopen as a new
+  D-entry rather than editing this one.
+- **Links:** A-014; Q-R3 (resolved); T-012; T-013 (closed); H-006.
+
+---
+
 ## D-008 — Rare-variant burden is aggregated at the gene level, not tested variant-by-variant
 
 - **Status:** PROPOSED *(not yet confirmed — see Q-G1, Q-G2)*

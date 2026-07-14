@@ -279,7 +279,11 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ### Q-R3 — Do we scrub the hardcoded workspace identifiers, and if so, how far?
 - **Priority:** 🟠
-- **Status:** OPEN — **a decision is needed** (T-013, A-014)
+- **Status:** ✅ **RESOLVED 2026-07-14 → D-010: leave them.** Option (1) below was chosen against:
+  the exposure is a low-severity disclosure, not a data-policy breach, and removing it would mean
+  modifying a notebook the lab treats as validated *and* rebuilding the offline harness everything else
+  is tested against. Kept here in full because the reasoning matters if it is ever revisited — and
+  note it gets more expensive to reverse the moment anyone clones the repo.
 - **Why it matters:** the notebook hardcodes the workspace bucket UUID and a named researcher's email
   in 13 cells, and the fixture replicates them as ~24 tracked directory names. No participant data is
   exposed and the bucket is access-controlled, so this is **information disclosure, not a data-policy

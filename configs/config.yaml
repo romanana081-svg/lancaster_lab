@@ -96,10 +96,12 @@ record_selection:
   # the index date. A-001 (🔴), resolve with Q-S1 in T-003.
   strategy: REVISIT                         # notebook value: earliest
 
-  # A-002 is REFUTED as safe. `distinct(person_id, .keep_all = TRUE)` over SQL with no ORDER BY
-  # keeps an arbitrary row, so same-day duplicates make results non-reproducible between runs.
-  # Must become deterministic before anything is published. T-005.
-  same_day_tiebreak: UNRESOLVED             # mean | min | max | first_by_value
+  # A-002 was REFUTED as safe: `distinct(person_id, .keep_all = TRUE)` over SQL with no ORDER BY
+  # keeps an arbitrary row, so same-day duplicates made results non-reproducible between runs.
+  # SETTLED by D-009 (2026-07-14): take the MEAN of same-day values. Same-day repeats are repeated
+  # measurements of one quantity, so averaging uses all of them and smooths assay error. min/max were
+  # rejected for imposing a directional bias on the study's key exposure.
+  same_day_tiebreak: mean                   # mean | median | min | max | first(legacy, arbitrary)
 
 # ---------------------------------------------------------------------------------------------
 # Genetics  (D-008 — PROPOSED, not accepted)

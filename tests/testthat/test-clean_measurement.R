@@ -93,6 +93,16 @@ test_that("ALWAYS returns exactly one row per person, whatever the tiebreak", {
   }
 })
 
+test_that("the DEFAULT tiebreak is 'mean', and it is deterministic (D-009)", {
+  # D-009 settled A-002. If someone changes the default back to the notebook's arbitrary `first`,
+  # this test fails -- which is the point. Reproducibility is not a preference.
+  df <- rbind(mm(6, 130, "2012-05-02"), mm(6, 131, "2012-05-02"), mm(6, 132, "2012-05-02"))
+  out <- clean_measurement(df, units = "mg/dL", bounds = LIPID_BOUNDS)   # no tiebreak= given
+  expect_equal(out$value, 131)
+  expect_equal(nrow(out), 1)
+  expect_silent(clean_measurement(df, units = "mg/dL", bounds = LIPID_BOUNDS))
+})
+
 test_that("same-day duplicates: deterministic tiebreaks are deterministic (A-002)", {
   # Fixture participant 1000006 -- same-day LDL of 130, 131, 132. The answer key can only assert
   # `one_of:130|131|132` today, because the notebook's tiebreak is arbitrary. These are the

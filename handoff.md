@@ -48,13 +48,15 @@ so that nothing sits idle waiting for an answer that could have been worked arou
   breach — the bucket is access-controlled and no participant data is exposed — but it is an internal
   identifier and a colleague's email in a public repo.
   1. May this repository be public at all (Q-R1)?
-  2. Is Megan comfortable with her institutional email appearing in it, or should it be scrubbed
-     (Q-R3, T-013)? **Scrubbing the working tree does not scrub git history** — that needs
-     `git filter-repo`, and it is far cheaper to decide this *before* the repo is pushed than after.
+  2. ~~Should the identifiers be scrubbed?~~ **Decided 2026-07-14 (D-010): no — the risk is accepted.**
+     Q-R3 is resolved and T-013 is closed. **But one thing here was decided *about* a person rather
+     than *with* her:** Megan's institutional email will appear in a public repository and she has not
+     been asked. That is a courtesy call worth making, and it is cheap to act on now — reversing it
+     costs a `git filter-repo` once anyone has cloned.
   3. What small-cell suppression threshold applies to any aggregate result we export later?
 - **Proceeding without it:** everything. Nothing is blocked. The repository is treated as **if it were
   about to become public**, which remains the right default.
-- **See:** A-012 (cleared), A-014, Q-R1, Q-R3, T-012 (done), T-013.
+- **See:** A-012 (cleared), A-014 (accepted), Q-R1, Q-R3 (resolved), D-010, T-012 (done), T-013 (closed).
 
 ## 🔴 H-003 — Advisor sign-off on the outcome definition and the index date
 

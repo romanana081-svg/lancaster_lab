@@ -48,11 +48,13 @@ normalise_unit <- function(x) {
 #' answer key can only assert membership (`one_of:130|131|132`), not a value. **Results are not
 #' bit-reproducible today.**
 #'
-#' `tiebreak = "first"` reproduces that (and warns). The deterministic options are "mean", "min",
-#' "max", and "median". **Which one we adopt is an open decision** — it is a real choice with
-#' scientific consequences (a mean smooths measurement error; a min is conservative for a risk
-#' factor), and it must be settled before anything is published. Tracked in `configs/config.yaml`
-#' as `record_selection.same_day_tiebreak: UNRESOLVED`.
+#' **D-009 settled this: the default is now `"mean"`.** Same-day repeats are best read as repeated
+#' measurements of one underlying quantity, so averaging them uses all the information and smooths
+#' assay error. `min`/`max` were rejected because they impose a *systematic directional bias* on the
+#' study's key exposure — `min` in particular would attenuate exactly the FH signal we are hunting.
+#'
+#' `tiebreak = "first"` still reproduces the notebook's arbitrary behaviour, and **warns**. It is kept
+#' only so the legacy pipeline can be replayed, not because it is ever the right choice.
 clean_measurement <- function(df,
                               value_col = "value_as_number",
                               date_col  = "measurement_datetime",
@@ -60,7 +62,7 @@ clean_measurement <- function(df,
                               units,
                               bounds,
                               anchor = c("earliest", "latest"),
-                              tiebreak = c("first", "mean", "min", "max", "median"),
+                              tiebreak = c("mean", "median", "min", "max", "first"),
                               normalise_units = FALSE,
                               out_names = c("person_id", "value", "date")) {
   anchor   <- match.arg(anchor)

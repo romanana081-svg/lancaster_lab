@@ -24,19 +24,6 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
 
 ## Now
 
-### T-013 — Decide what to do about the hardcoded workspace identifiers
-- **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** Q-R3 (a decision) · **Blocks:** a public push
-- **Why:** T-012 cleared the participant-data risk (A-012) but found a smaller one (A-014): the
-  workspace bucket UUID and a named researcher's email are hardcoded in 13 notebook cells **and**
-  replicated as ~24 tracked directory names under `fixture/bucket/`. Not a data-policy breach; still
-  not something to publish for no reason.
-- **Done when:** Q-R3 is decided and recorded as a D-entry, and — if the decision is to scrub — the
-  notebook, the fixture, and the answer key are changed **together** and `verify.py` is still green.
-- **Notes:** the fix is entangled, which is exactly why it is a decision and not a chore. The notebook
-  resolves those `gs://` paths as literals and the fixture mirrors them so the notebook runs unmodified
-  offline. Changing one without the other breaks the offline harness. Scrubbing the working tree also
-  does **not** scrub git history.
-
 ### T-002 — Cohort construction and the attrition flowchart
 - **Status:** BLOCKED · **Priority:** P0 · **Blocked by:** Q-S1 (index date), Q-A1 (outcome), Q-A2
   (EHR density) · **Blocks:** T-003, T-007, T-009
@@ -198,6 +185,14 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
 ---
 
 ## Done
+
+### T-013 — Decide what to do about the hardcoded workspace identifiers ✅ 2026-07-14 (closed, no work)
+- **Result:** decided **not** to scrub — D-010. The exposure (workspace bucket UUID + a colleague's
+  email, in 13 notebook cells and ~24 fixture paths) is a low-severity disclosure, not a data-policy
+  breach, and removing it would mean modifying a validated notebook *and* rebuilding the offline
+  harness. A-014 becomes ACCEPTED-AS-LIMITATION; Q-R3 resolved.
+- **If this is ever revisited:** it is cheap now (3 commits, no collaborators) and needs
+  `git filter-repo` once anyone has cloned. Reopen as a new D-entry rather than editing D-010.
 
 ### T-012 — Audit the committed notebook's outputs for controlled-tier data ✅ 2026-07-14
 - **Result:** **The notebook has no outputs at all** — 291 code cells, every one with `outputs: []` and
