@@ -22,6 +22,54 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-14 — T-012: the governance audit, and a risk that never existed
+
+**Did:** Ran T-012 — the P0 governance audit. Parsed `LDLR Get phenotypes.ipynb` as JSON rather than
+reading it by eye, checked **every version of it in git history**, and scanned the source for
+identifiers, secrets, and reported counts.
+
+**Learned — the headline finding is a negative one, and it retires the project's biggest blocker:**
+
+**The notebook has no cell outputs. It never did.** All 291 code cells carry `outputs: []` and
+`execution_count: null`, in the working tree *and* in both historical commits (`41791cc`, `832f3e2`).
+Zero output bytes have ever entered this repository. A-012 is verified — vacuously — and H-006's
+blocking form is answered: **we are not carrying controlled-tier participant data.**
+
+**The interesting part is where the belief came from.** CLAUDE.md states, as fact, that the notebook is
+committed *with* outputs "which is why it is ~180 KB". That inference is backwards. The file is 101 KB
+of **source** — the auto-generated All of Us SQL strings are ~6 KB *per cell* — plus JSON overhead. A
+plausible explanation for a file size was written down as a fact, that fact became A-012 (🔴, "the
+highest-urgency non-scientific item in the project"), and it propagated into `handoff.md`, `README.md`,
+and the `.gitignore` rationale. Nobody had opened the JSON. **The lesson is not "CLAUDE.md was wrong" —
+it is that a documentation system this dense will faithfully propagate an unchecked premise into five
+files, and only a mechanical check dislodges it.** Corrected at the source in CLAUDE.md, so future
+sessions do not re-inherit it.
+
+**What the audit *did* find (A-014, new):** the notebook hardcodes the workspace bucket UUID and the
+owner's institutional email —
+`gs://fc-secure-7e84f6f0-…/bq_exports/megan.lancaster@researchallofus.org/…` — in 13 cells, and the
+fixture **mirrors those literals as ~24 tracked directory names**. This is information disclosure, not
+a data-policy breach: no participant data, and the bucket is access-controlled. But it is an internal
+identifier and a colleague's email, in a repo we intend to make public, for no benefit.
+
+The fix is **entangled**, which is why it became a question (Q-R3) and not a chore: the "Format" cells
+resolve those `gs://` paths as *literals*, and the fixture was deliberately built to mirror them so the
+notebook runs unmodified offline. Notebook, fixture, and answer key have to move together or the
+offline harness breaks — and scrubbing the working tree does nothing about git history.
+
+Also confirmed clean: no API keys or secrets anywhere in the notebook, and no participant counts
+reported in any markdown cell.
+
+**Decided:** no new D-entries. Q-R2 is **resolved** (answer: nothing needs stripping). Q-R3 is raised
+and needs a human. H-006 downgraded 🔴 → 🟠. A-012 verified; A-014 opened.
+
+**Next:** the governance path is clear until someone answers Q-R3. The analysis path is still gated on
+H-003 (advisor: outcome definition + index date). The largest genuinely-unblocked task is T-005 —
+lifting the notebook's R cleaning logic into a tested `src/phenotype/` package, which is now possible
+locally because R turned out to be installed after all.
+
+---
+
 ## 2026-07-13 — Completing the documentation scaffold; two environment findings
 
 **Did:**

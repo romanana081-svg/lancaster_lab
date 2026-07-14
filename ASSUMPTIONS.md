@@ -166,13 +166,41 @@ adopt without noticing.
 
 ### A-012 — The committed notebook's cell outputs contain no identifiable participant data
 - **Risk:** 🔴 (governance, not science)
-- **Status:** **UNVERIFIED — must be checked before any public push**
-- **Where it bites:** `LDLR Get phenotypes.ipynb` is committed *with outputs* (~180 KB), and those
-  outputs were produced against the real controlled-tier CDR.
-- **How to test it:** read every output cell. Look for row-level prints (`head()`, `View()`),
-  small-cell counts, dates of birth, or anything person-level.
-- **If it's wrong:** a controlled-tier data policy violation, in a public GitHub repository. See
-  Q-R2 and `handoff.md` H-006. **This is the highest-urgency non-scientific item in the project.**
+- **Status:** ✅ **VERIFIED 2026-07-14 (T-012) — vacuously true: there are no outputs at all**
+- **Where it bites:** `LDLR Get phenotypes.ipynb`, and any push to a non-private remote.
+- **How it was tested:** parsed the notebook JSON directly, and *every version of it in git history*.
+  Result: **291 code cells, all with `outputs: []` and `execution_count: null`.** Zero output bytes,
+  in the working tree and in both historical commits (`41791cc`, `832f3e2`). The notebook was
+  stripped before it ever entered this repository.
+- **The 180 KB has an innocent explanation.** CLAUDE.md asserts the file is large *"because it is
+  committed with outputs"*. That is **false**. The size is 101 KB of *source* — the auto-generated
+  All of Us SQL strings run to ~6 KB per cell — plus JSON overhead. The premise was wrong, so the
+  conclusion drawn from it was too.
+- **Consequence:** the repository does **not** carry controlled-tier participant data, and never did.
+  The highest-urgency governance blocker is **cleared**. This does not by itself make the repo
+  publishable — see A-014, which is what the audit *did* find.
+
+### A-014 — Hardcoded workspace identifiers in the notebook are safe to publish
+- **Risk:** 🟠 (governance, not science)
+- **Status:** **REFUTED as safe — the identifiers are real, and they are tracked in git**
+- **Where it bites:** 13 cells of `LDLR Get phenotypes.ipynb` hardcode the workspace GCS bucket and
+  the owner's institutional email:
+  `gs://fc-secure-7e84f6f0-9e03-4626-b34e-6dcf5d5f1701/bq_exports/megan.lancaster@researchallofus.org/…`
+  The **synthetic fixture replicates those literal paths as directory names**, so the same bucket UUID
+  and email are also committed as ~24 tracked file paths under `fixture/bucket/`.
+- **What this is and is not.** It is **not** participant data — no controlled-tier content is exposed,
+  and A-012 is clean. It *is* a private All of Us workspace identifier plus a named researcher's email,
+  published in a public repository. The bucket is access-controlled, so the UUID is not a credential;
+  but it is an internal identifier that nothing is gained by publishing, and the email is a real
+  person's.
+- **How to test it:** done — `T-012`'s scan. Confirmed: 13 source cells, 0 API keys, 0 reported counts
+  in markdown.
+- **If it's wrong:** low-severity information disclosure, not a data-policy breach. **But the fix is
+  entangled:** the notebook's "Format" cells resolve those `gs://` paths *as literals*, and the fixture
+  is built to mirror them exactly so the notebook runs unmodified offline (`fixture/README.md`).
+  Parameterising the paths therefore means changing the notebook **and** rebuilding the fixture and its
+  answer key together — which is why it is a decision (Q-R3), not a tidy-up. It also runs straight into
+  the CLAUDE.md rule against silently "fixing" the notebook's load-bearing quirks.
 
 ### A-013 — The synthetic fixture is representative enough to validate the ETL
 - **Risk:** 🟡

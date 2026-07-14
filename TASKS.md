@@ -24,19 +24,18 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
 
 ## Now
 
-### T-012 — Audit the committed notebook's outputs for controlled-tier data
-- **Status:** TODO · **Priority:** P0 · **Blocks:** any push to a non-private remote (Q-R1, Q-R2)
-- **Why:** `LDLR Get phenotypes.ipynb` is committed **with cell outputs generated against the real
-  CDR** (A-012). If any output holds row-level data, small-cell counts, or dates of birth, the
-  repository is already carrying controlled-tier content, and a public push would be a data-policy
-  violation. This is the highest-urgency non-scientific item in the project and **it is not blocked on
-  anyone** — it is a mechanical read of a file we already have.
-- **Done when:** every output cell has been read and classified (safe / aggregate-only / must-strip);
-  the finding is recorded in `JOURNAL.md` and A-012's status changes from UNVERIFIED; and, if anything
-  identifiable is found, H-006 is raised with the specific cells named.
-- **Notes:** removing outputs in a *new* commit does not remove them from *history*. If the audit finds
-  identifiable data, the remedy is `git filter-repo`, not `git rm`. Decide the strip-by-default policy
-  in the same pass (Q-R2).
+### T-013 — Decide what to do about the hardcoded workspace identifiers
+- **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** Q-R3 (a decision) · **Blocks:** a public push
+- **Why:** T-012 cleared the participant-data risk (A-012) but found a smaller one (A-014): the
+  workspace bucket UUID and a named researcher's email are hardcoded in 13 notebook cells **and**
+  replicated as ~24 tracked directory names under `fixture/bucket/`. Not a data-policy breach; still
+  not something to publish for no reason.
+- **Done when:** Q-R3 is decided and recorded as a D-entry, and — if the decision is to scrub — the
+  notebook, the fixture, and the answer key are changed **together** and `verify.py` is still green.
+- **Notes:** the fix is entangled, which is exactly why it is a decision and not a chore. The notebook
+  resolves those `gs://` paths as literals and the fixture mirrors them so the notebook runs unmodified
+  offline. Changing one without the other breaks the offline harness. Scrubbing the working tree also
+  does **not** scrub git history.
 
 ### T-002 — Cohort construction and the attrition flowchart
 - **Status:** BLOCKED · **Priority:** P0 · **Blocked by:** Q-S1 (index date), Q-A1 (outcome), Q-A2
@@ -190,5 +189,14 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
 
 ## Done
 
-*(nothing yet — completed tasks move here with their completion date and a link to the JOURNAL entry
-that records what was learned, rather than being deleted.)*
+### T-012 — Audit the committed notebook's outputs for controlled-tier data ✅ 2026-07-14
+- **Result:** **The notebook has no outputs at all** — 291 code cells, every one with `outputs: []` and
+  `execution_count: null`, in the working tree *and* in both historical commits. Zero output bytes ever
+  entered this repository. A-012 is VERIFIED (vacuously), and the project's highest-urgency governance
+  blocker is cleared.
+- **The premise was wrong.** CLAUDE.md states the notebook is ~180 KB *"because it is committed with
+  outputs"*. It is not. The size is 101 KB of source — the auto-generated All of Us SQL runs to ~6 KB
+  per cell — plus JSON overhead. A whole risk was inferred from a mis-read file size.
+- **What the audit did find:** hardcoded workspace identifiers (A-014) → T-013, Q-R3. Also confirmed:
+  no API keys or secrets, and no participant counts reported in markdown.
+- **See:** `JOURNAL.md` 2026-07-14; A-012; A-014.

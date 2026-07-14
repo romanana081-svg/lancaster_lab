@@ -52,7 +52,8 @@ Honest inventory, 2026-07-13.
 | PREVENT implementation | ⛔ **does not exist** | T-006 |
 | Phenotype schema contract | ⛔ **does not exist** | §3 below, T-003 |
 | Genetic pipeline | ⛔ **does not exist**, and has **no offline substrate** | T-008, Q-G3 |
-| Notebook outputs cleared of controlled-tier data | ⛔ **UNVERIFIED** | A-012, T-012 — highest urgency |
+| Notebook free of controlled-tier data | ✅ **VERIFIED** 2026-07-14 | T-012: **0 outputs** in 291 code cells, in the working tree *and* all history |
+| Notebook free of workspace identifiers | ❌ **REFUTED** | A-014: bucket UUID + owner email in 13 cells; → Q-R3, T-013 |
 
 **Reproduce the green check:**
 

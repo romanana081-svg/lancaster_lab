@@ -114,5 +114,13 @@ Do not silently clean these up — they are load-bearing history, but flag them 
   cells diagnose this via `diff = LDL - Trig` and drop `diff == 0` rows. This filter is applied in the
   troubleshooting scratch frame (`ldl_trig`), *not* to `ldl_df`/`trig_df` used in the main join.
 - Cell ~291 contains a typo — `Sys.getenv('WORKSPACE_BUCKET')b` — in one of the save blocks.
-- The notebook is committed **with outputs**, which is why it is ~180 KB. Diffs will be noisy;
-  when reviewing, compare cell `source` rather than the raw JSON.
+- ~~The notebook is committed **with outputs**, which is why it is ~180 KB.~~ **Corrected 2026-07-14
+  (T-012): this is false.** The notebook has **no outputs** — all 291 code cells have `outputs: []` and
+  `execution_count: null`, in the working tree and in every historical commit. It is ~180 KB because it
+  is ~101 KB of *source*: the auto-generated All of Us SQL strings run to ~6 KB per cell. Diffs are
+  still noisy for that reason, so when reviewing, compare cell `source` rather than the raw JSON.
+- The notebook **does** hardcode the workspace bucket UUID and the owner's email in 13 cells
+  (`gs://fc-secure-…/bq_exports/megan.lancaster@researchallofus.org/…`), and `fixture/bucket/` mirrors
+  those literals as tracked directory names. Not participant data; still unresolved — see A-014, Q-R3.
+  **Do not "fix" this unilaterally:** the fixture is built to mirror those exact paths so the notebook
+  runs unmodified offline, so notebook, fixture, and answer key must change together.

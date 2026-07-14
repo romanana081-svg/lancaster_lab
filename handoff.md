@@ -32,24 +32,29 @@ so that nothing sits idle waiting for an answer that could have been worked arou
 
 ---
 
-## 🔴 H-006 — Confirm what may leave the Workbench, and whether this repo may be public
+## 🟠 H-006 — Confirm what may leave the Workbench, and whether this repo may be public
 
 - **Needed from:** the lab PI / All of Us Data Use Agreement / the Resource Access Board.
-- **Why it is blocking:** `LDLR Get phenotypes.ipynb` is committed **with cell outputs that were
-  produced against the real controlled-tier CDR** (A-012). Nobody has yet read those outputs to check
-  whether they contain row-level data, small-cell counts, or dates of birth. Until someone does, we do
-  not know whether the repository is already carrying controlled-tier content — and therefore we cannot
-  push it anywhere that is not private.
-- **The specific questions:**
+- **DOWNGRADED 🔴 → 🟠 on 2026-07-14.** The audit (T-012) is done, and the answer is good: **the
+  notebook has no cell outputs at all** — not in the working tree, not in any historical commit. The
+  repository is **not** carrying controlled-tier participant data, and never was. The belief that it
+  did came from CLAUDE.md's claim that the file is large "because it is committed with outputs", which
+  turned out to be false (it is large because the generated SQL is enormous). **The blocking version of
+  this question is answered.**
+- **What still needs you — a smaller question, and a real one:** the notebook hardcodes the workspace
+  bucket UUID and a named researcher's email
+  (`gs://fc-secure-7e84f6f0-…/bq_exports/megan.lancaster@researchallofus.org/…`) in 13 cells, and the
+  fixture mirrors those literals as ~24 tracked directory names (A-014). That is not a data-policy
+  breach — the bucket is access-controlled and no participant data is exposed — but it is an internal
+  identifier and a colleague's email in a public repo.
   1. May this repository be public at all (Q-R1)?
-  2. If so, must notebook outputs be stripped, and does the *git history* need rewriting as well as the
-     working tree (Q-R2)? Deleting a file in a new commit does **not** remove it from history.
-  3. What is the small-cell suppression threshold we must apply to any exported aggregate result?
-- **Proceeding without it:** T-012 (the cell-by-cell audit) does **not** need a human and is queued as
-  P0. It is what turns this question from "we don't know" into "here is exactly what is in there" —
-  which is the form a human can actually answer. Meanwhile the repository is treated as **if it were
-  about to become public**, which is the only safe default.
-- **See:** A-012, Q-R1, Q-R2, T-012. **This is the highest-urgency non-scientific item in the project.**
+  2. Is Megan comfortable with her institutional email appearing in it, or should it be scrubbed
+     (Q-R3, T-013)? **Scrubbing the working tree does not scrub git history** — that needs
+     `git filter-repo`, and it is far cheaper to decide this *before* the repo is pushed than after.
+  3. What small-cell suppression threshold applies to any aggregate result we export later?
+- **Proceeding without it:** everything. Nothing is blocked. The repository is treated as **if it were
+  about to become public**, which remains the right default.
+- **See:** A-012 (cleared), A-014, Q-R1, Q-R3, T-012 (done), T-013.
 
 ## 🔴 H-003 — Advisor sign-off on the outcome definition and the index date
 

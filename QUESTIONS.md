@@ -277,7 +277,44 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ---
 
+### Q-R3 — Do we scrub the hardcoded workspace identifiers, and if so, how far?
+- **Priority:** 🟠
+- **Status:** OPEN — **a decision is needed** (T-013, A-014)
+- **Why it matters:** the notebook hardcodes the workspace bucket UUID and a named researcher's email
+  in 13 cells, and the fixture replicates them as ~24 tracked directory names. No participant data is
+  exposed and the bucket is access-controlled, so this is **information disclosure, not a data-policy
+  breach** — but there is no benefit to publishing either one, and a colleague's email is involved.
+- **The options:**
+  1. **Leave it.** Zero risk of breaking the offline harness. Publishes an internal bucket UUID and a
+     real person's email for no gain. Cheapest now, irreversible-ish later (history).
+  2. **Parameterise the paths** — read the bucket and owner from `WORKSPACE_BUCKET` / `OWNER_EMAIL`
+     (which the Workbench already injects) and rebuild `fixture/bucket/` under a synthetic owner. The
+     right end state, and it *also* removes 13 hardcoded literals, which CLAUDE.md already flags as a
+     hazard. But: the "Format" cells resolve those `gs://` paths as **literals**, and the fixture is
+     built to mirror them so the notebook runs **unmodified** offline. Notebook, fixture, and answer key
+     must change **together**, and `verify.py` must stay green. It also brushes against the CLAUDE.md
+     rule that the notebook's quirks are load-bearing and must not be silently "fixed".
+  3. **Scrub the working tree only.** Half a fix — the identifiers stay in git history, so a public push
+     still exposes them. Not worth doing alone.
+  4. **Scrub *and* rewrite history** (`git filter-repo`). The only option that actually removes them
+     from a public repo. Cheap now (3 commits, no collaborators); expensive and disruptive once anyone
+     has cloned.
+- **Leaning:** (2) + (4), and **decide it before the first push**, because (4) is nearly free today and
+  becomes a genuine nuisance the moment anyone clones. But this is not my call to make alone: it
+  changes a notebook the lab considers validated, and it involves a colleague's email.
+- **To resolve:** a human (H-006) — Megan's preference on the email, and the lab's view on whether the
+  notebook may be modified.
+- **Deadline:** **before the first push to any non-private remote.**
+
+---
+
 ## Resolved
 
-*(none yet — when a question is resolved, move it here with a link to the D-entry that settled it,
-rather than deleting it. The record of what was once uncertain is part of the project's memory.)*
+*(when a question is resolved, move it here with a link to the D-entry that settled it, rather than
+deleting it. The record of what was once uncertain is part of the project's memory.)*
+
+**Q-R2 — What must be stripped from the committed notebook before it can be shared?** — answered by
+**T-012 on 2026-07-14, and the answer is "nothing"**: the notebook has no cell outputs at all, in the
+working tree or in any historical commit. The question was premised on CLAUDE.md's claim that the file
+is ~180 KB *because* it carries outputs; that claim was false (it is 101 KB of generated SQL source).
+The remaining, much smaller governance item is Q-R3, above. See A-012.
