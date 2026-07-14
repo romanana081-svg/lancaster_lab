@@ -16,10 +16,12 @@ advance, what "correct" would look like, and then check.
 
 | Layer | Question it answers | Where it lives | When it runs |
 |---|---|---|---|
-| **1. Unit** | Does this function do what it claims, on a tiny input with a known answer? | `tests/python/`, `tests/testthat/` | every change |
-| **2. Integration** | Does the pipeline run end-to-end and produce the expected table? | `fixture/build/verify.py`, `tests/` | every change |
-| **3. Validation (scientific ground truth)** | Does the code reproduce an **externally known** answer? | `tests/python/validation/` | every change to the model code |
+| **1. Unit** | Does this function do what it claims, on a tiny input with a known answer? | `tests/testthat/` | every change |
+| **2. Integration** | Does the pipeline run end-to-end and produce the expected table? | `fixture/build/verify.py`, `tests/testthat/` | every change |
+| **3. Validation (scientific ground truth)** | Does the code reproduce an **externally known** answer? | `tests/testthat/` (PREVENT vs. the published values) | every change to the model code |
 | **4. Data quality** | Is the *data* the pipeline produced sane? | `reports/quality/` (T-011) | every time a dataset is produced |
+
+*(All R since D-011. `pytest` is gone; the only Python left is the fixture builder, which is tooling.)*
 
 Layers 1 and 2 test the **code**. Layer 3 tests whether the code implements the **science**. Layer 4
 tests the **data**. All four are necessary and none substitutes for another — code can be perfectly
@@ -47,9 +49,12 @@ Honest inventory, 2026-07-13.
 | Synthetic CDR fixture | ✅ **GREEN** | `26 pass, 1 reproduced-bug (expected), 0 unexpected failure(s)` |
 | The notebook's 13 generated SQL queries | ✅ run, all return rows | `fixture/build/export.py` runs them **verbatim** |
 | The R cleaning pipeline's behaviour | ✅ characterised (incl. its bugs) | `fixture/expected/answer_key.csv`, 27 scenario participants |
-| R available locally (4.6.0, tidyverse) | ✅ confirmed 2026-07-13 | H-001 resolved; `bigrquery` absent, Workbench-only anyway |
-| Python available locally (3.13.7, duckdb) | ✅ confirmed 2026-07-13 | not on `PATH`; see `docs/environment.md` |
-| PREVENT implementation | ⛔ **does not exist** | T-006 |
+| R available locally (4.6.0, tidyverse, testthat, DBI, **duckdb**, **arrow**) | ✅ confirmed 2026-07-14 | H-001 resolved. `duckdb`+`arrow` installed 2026-07-14 — **R can now read the fixture and write the Parquet contract** |
+| Python available locally (3.13.7, duckdb) | ✅ confirmed 2026-07-13 | fixture builder only; not on `PATH` |
+| Cleaning idiom (`clean_measurement`, `clean_codes`) | ✅ **59 testthat tests pass** | T-005 |
+| Concept dictionary (`resolve_concepts`) | ✅ tested **against the real fixture DuckDB** | T-014, D-014 |
+| **Fixture coverage of the PREVENT panel** | ❌ **ALMOST NONE** | LDL/trig/BMI only; **no SBP, creatinine, HbA1c, smoking, or antihypertensives**. Blocks offline testing of the PREVENT extractor → **T-004** |
+| PREVENT implementation | ⛔ **does not exist** | T-016 (R, not Python — D-011) |
 | Phenotype schema contract | ⛔ **does not exist** | §3 below, T-003 |
 | Genetic pipeline | ⛔ **does not exist**, and has **no offline substrate** | T-008, Q-G3 |
 | Notebook free of controlled-tier data | ✅ **VERIFIED** 2026-07-14 | T-012: **0 outputs** in 291 code cells, in the working tree *and* all history |

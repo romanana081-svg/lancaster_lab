@@ -4,8 +4,9 @@ The single source of truth for *what this project is and how it is built*.
 If you read only one file, read this one. Terms in **bold-italic** on first use are defined in
 [`GLOSSARY.md`](GLOSSARY.md).
 
-- **Status:** scaffold (v0.1.0). No analysis code exists yet.
-- **Last updated:** 2026-07-13
+- **Status:** ETL in progress (v0.2.0). All R (D-011). Cohort and outcome settled by the advisor
+  (D-013, D-014).
+- **Last updated:** 2026-07-14
 - **Related:** [`DECISIONS.md`](DECISIONS.md) · [`ASSUMPTIONS.md`](ASSUMPTIONS.md) · [`VALIDATION.md`](VALIDATION.md) · [`TASKS.md`](TASKS.md)
 
 ---
@@ -71,16 +72,30 @@ repository contains, or may ever contain, real participant-level data (see §8).
 
 ## 2. Target population, exposure, outcome
 
-These three definitions determine everything downstream, and **two of the three are not yet settled**
-(see [`QUESTIONS.md`](QUESTIONS.md) and [`handoff.md`](handoff.md) H-003).
+These three definitions determine everything downstream. **The advisor settled them on 2026-07-14**
+(D-013, D-014); one significant gap remains (Q-S6).
 
-| | Working definition | Status |
+| | Definition | Status |
 |---|---|---|
-| **Population** | All of Us participants with srWGS, aged 30–79 at index date, **without ASCVD before the index date** (PREVENT is a *primary prevention* model) | Proposed |
-| **Index date (time zero)** | The date of the first assessment at which all PREVENT inputs are available | **Open — Q-S1** |
-| **Exposure** | Aggregated burden of low-frequency / rare variants (see §5) | Proposed |
-| **Outcome** | ***Incident*** ASCVD: non-fatal myocardial infarction, coronary heart disease death, fatal or non-fatal stroke | **Open — Q-A1, needs advisor** |
+| **Population** | All of Us participants with srWGS, **aged ≥ 30**, **with a complete PREVENT input panel** (incomplete participants are *excluded*, not imputed), **without ASCVD before baseline** | **Settled — D-013** |
+| **Baseline (time zero)** | Covariates are taken from **before the event**; the cohort is then stratified on whether an event occurred | **Settled for cases — D-013.** ⚠️ **Undefined for non-cases — Q-S6** |
+| **Exposure** | Aggregated burden of low-frequency / rare variants (§5). A ***PRS*** is added first (next phase). | Proposed |
+| **Outcome** | **ASCVD**, ascertained from **both** ICD diagnosis codes and CPT procedure codes, with concept IDs **resolved through the All of Us vocabulary** to establish event timing and disease type/stage | **Settled — D-014** |
 | **Censoring** | Last known EHR contact, death from a non-ASCVD cause (a ***competing risk***), or administrative end of follow-up | Proposed |
+
+**Two traps this design has *not* escaped, and must not be allowed to hide:**
+
+- **Q-S6 — "data before the event" defines a baseline for cases and for nobody else.** Most
+  participants never have an event, so there is no event for their covariates to precede. If cases are
+  anchored just before their event while non-cases are anchored at, say, their first complete panel,
+  then cases' risk factors are measured *closer to their disease* — and every predictor looks stronger
+  than it is, **with no bug appearing anywhere.** A single common anchor, applied symmetrically, is
+  what makes this a prediction question rather than an artefact. 🔴 open.
+- **A-015 — the complete-panel requirement is not a neutral filter.** Having lipids *and* a blood
+  pressure *and* a creatinine *and* a smoking status recorded is a marker of **sustained healthcare
+  contact**. The excluded skew toward sparse-EHR participants, which tracks access, socioeconomic
+  status, and ancestry — and therefore entangles cohort membership with the very genetics we intend to
+  study (A-011). It must be *quantified* in the attrition table, not assumed away.
 
 Two traps are worth naming now because they invalidate studies:
 
@@ -97,40 +112,53 @@ Two traps are worth naming now because they invalidate studies:
 
 ## 3. Software architecture
 
-### 3.1 The bilingual split, and why
+### 3.1 One language: R
 
-This project is deliberately **two languages** (decision **D-002**):
+**The project is all R** (decision **D-011**).
 
-| Layer | Language | Why |
-|---|---|---|
-| **Phenotyping ETL** — pull OMOP domains out of BigQuery, clean them, produce one row per person | **R / tidyverse** | An extensively validated R implementation already exists (`LDLR Get phenotypes.ipynb`), the All of Us Workbench is R-first for this kind of work, and rewriting working, reviewed cleaning logic is pure risk with no scientific payoff. |
-| **PREVENT, genetics, statistics, figures** | **Python** | The PREVENT reference implementation is Python; survival analysis, calibration, and decision-curve tooling are mature here; and the user wants to learn Python. |
+It was briefly designed as two — R for the ETL, Python for PREVENT and the statistics — on the
+reasoning that PREVENT's reference implementation and the best survival tooling lived in Python. **That
+premise was wrong: the PREVENT equations are available in R.** With the only benefit gone, the costs of
+the split (two toolchains, two test frameworks, two dependency systems, and a serialisation boundary
+where silent bugs hide) bought nothing, so the split was reversed. D-002 is superseded and kept for the
+record.
 
-**The cost of this decision is real and is recorded, not hidden:** two toolchains, two test
-frameworks (`testthat` and `pytest`), two dependency systems, and a serialization boundary in the
-middle. It is accepted because the alternative — rewriting validated epidemiological cleaning code
-in a language the author is still learning — is the more dangerous of the two options.
+| Layer | Where |
+|---|---|
+| **Phenotyping ETL** — pull OMOP domains, resolve concept codes, clean, one row per person | `src/phenotype/` (R) |
+| **PREVENT, genetics, statistics, figures** | `src/ascvd/` (R) |
+| **Tests** | `tests/testthat/` |
 
-### 3.2 The contract between them
+R's survival stack (`survival`, `rms`, `riskRegression`, `timeROC`, `dcurves`) covers every method in
+§6. The one honest cost: R's decision-curve and time-dependent-AUC tooling is thinner than Python's,
+and we lose `lifelines` as an independent cross-check. If a method turns out to be genuinely
+unavailable, that is a new decision — **not** a licence to quietly reintroduce Python.
 
-The two halves meet at exactly **one** artifact, and nowhere else:
+*(The synthetic fixture's **builder** — `fixture/build/*.py` — remains Python. It is test tooling, not
+analysis: it generates the DuckDB CDR and diffs the pipeline against an answer key. It works, it is not
+on the scientific path, and rewriting it would be risk for no payoff. See D-011's scope note.)*
+
+### 3.2 The phenotype table is still a contract
+
+Even with one language, the phenotype table stays **versioned, schema-validated, and immutable**
+(decision **D-012**, superseding D-005):
 
 ```
-                        ┌──────────────────────────────┐
-   R half writes  ───►  │  phenotypes_v<N>.parquet     │  ◄─── Python half reads
-                        │  + configs/phenotype_schema  │
-                        └──────────────────────────────┘
+   src/phenotype  ───►  phenotypes_v<N>.parquet  ───►  src/ascvd
+                        + configs/phenotype_schema.json
+                          validated on write AND on read
 ```
 
 - One row per `person_id`. Columns, types, units, and permitted values are declared in
   `configs/phenotype_schema.json`.
-- **Both sides validate against that schema** — R on write, Python on read. A schema violation is a
-  hard failure, never a warning.
+- A schema violation is a **hard failure**, never a warning.
 - The file is **versioned and immutable**. `phenotypes_v2.parquet` never overwrites
   `phenotypes_v1.parquet`; previous analyses stay reproducible.
 
-This is decision **D-005**. The point of a single narrow contract is that either half can be
-rewritten — including replacing the R half with Python later — without touching the other.
+**None of those protections were ever about Python.** A schema is what turns a renamed column, a
+mg/dL→mmol/L unit drift, or a duplicated `person_id` into a loud crash instead of a quietly wrong
+number — and that is just as necessary within one language as across two. Dropping the guard because
+the language changed would be discarding it along with the thing it was guarding.
 
 ### 3.3 Repository layout
 
@@ -156,19 +184,22 @@ lancaster_lab/
 │
 ├── sql/                   BigQuery / DuckDB queries, one file per domain
 │
-├── src/                   production logic ONLY (never notebooks)
-│   ├── aou_ascvd/             Python package
-│   │   ├── io/                    load/save, schema validation
-│   │   ├── prevent/               the PREVENT equations
-│   │   ├── features/              genetic feature construction
-│   │   ├── stats/                 survival models, discrimination, calibration
-│   │   ├── validation/            data-quality reports
-│   │   └── viz/                   figures (every figure regenerable from code)
-│   └── phenotype/             R package: the phenotyping ETL
+├── src/                   production logic ONLY (never notebooks). ALL R (D-011).
+│   ├── phenotype/             the phenotyping ETL
+│   │   ├── clean_measurement.R    the per-domain cleaning idiom
+│   │   ├── clean_codes.R          code-based phenotypes (ICD + CPT)
+│   │   ├── concept_dictionary.R   resolve concept_ids -> codes + meanings (D-014)
+│   │   ├── prevent_inputs.R       extract the PREVENT panel
+│   │   └── ascvd_events.R         event timing, type, and stage
+│   └── ascvd/                 the model half
+│       ├── prevent/               the PREVENT equations
+│       ├── features/              PRS, then genetic burden
+│       ├── stats/                 survival models, discrimination, calibration
+│       ├── validation/            data-quality reports
+│       └── viz/                   figures (every figure regenerable from code)
 │
 ├── tests/
-│   ├── python/            pytest: unit + integration + validation tests
-│   └── testthat/          testthat: same, for the R half
+│   └── testthat/          unit + integration + validation tests
 │
 ├── fixture/               synthetic All of Us CDR — the offline test substrate (see FORMAT.md)
 ├── notebooks/             EXPLORATORY ONLY. Nothing here is ever a dependency of src/.
@@ -240,14 +271,21 @@ Executed in order. Each stage is a task in [`TASKS.md`](TASKS.md) and has a cont
 
 | # | Stage | Output |
 |---|---|---|
-| 1 | **Cohort construction** — srWGS, age 30–79, no prior ASCVD, PREVENT inputs available | cohort table + attrition flowchart |
-| 2 | **Phenotype ETL** — clean each OMOP domain, one row per person | `phenotypes_v<N>.parquet` |
+| 0 | **Concept dictionary** — resolve every `concept_id` to its code and meaning in the All of Us vocabulary, so the outcome is inspectable rather than a wall of integers (D-014) | code → meaning table |
+| 1 | **Cohort construction** — srWGS, age ≥ 30, complete PREVENT panel, no prior ASCVD (D-013) | cohort table + **attrition flowchart, incl. included-vs-excluded comparison (A-015)** |
+| 2 | **Phenotype ETL** — extract and clean the PREVENT panel and the ASCVD events, one row per person | `phenotypes_v<N>.parquet` |
 | 3 | **Data quality report** — missingness, dictionary, outliers, duplicates, schema | `reports/quality/` |
 | 4 | **PREVENT computation** — 10y and 30y risk per person | risk column + calibration plots |
-| 5 | **Baseline validation** — how well does PREVENT perform *in All of Us*? Discrimination and calibration, overall and by sex and genetic ancestry | this is a result in its own right |
-| 6 | **Genetic feature construction** — variant QC, MAF bands, functional masks, gene-level aggregation | gene × person burden matrix |
+| 5 | **Baseline validation** — how well does PREVENT perform *in All of Us*? Discrimination and calibration, overall and by sex and genetic ancestry. **Also: does it reproduce the published literature values?** | this is a result in its own right |
+| 6a | **PRS** — polygenic risk score as the first genetic layer (advisor-led) | PRS per person |
+| 6b | **Rare-variant features** — variant QC, MAF bands, functional masks, gene-level aggregation | gene × person burden matrix |
 | 7 | **Incremental value test** — offset Cox (§1.3); ΔC-index, time-dependent AUC, calibration, ***NRI***, ***decision-curve analysis*** | the primary result |
-| 8 | **Sensitivity analyses** — MAF thresholds, variant masks, gene sets, ancestry-stratified, competing-risk (Fine–Gray) | robustness table |
+| 8 | **Sensitivity analyses** — MAF thresholds, variant masks, gene sets, ancestry-stratified, competing-risk (Fine–Gray), **outcome with and without revascularisation procedures** | robustness table |
+
+**Note on stage 6a.** A PRS is added *before* rare variants. That ordering matters for the science: a
+PRS captures *common*-variant risk, so once it is in the model, the rare-variant question sharpens from
+"does genetics add anything?" to the much better question **"do rare variants add anything beyond both
+PREVENT *and* common-variant risk?"** — which is the claim a reviewer will actually press on.
 
 **Stage 5 is not a formality.** PREVENT was derived in a different population; it will almost
 certainly be **miscalibrated** in All of Us. If we skip this and go straight to stage 7, any apparent

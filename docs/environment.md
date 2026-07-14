@@ -19,15 +19,19 @@ Verified **2026-07-13** on Windows 11 (`win32`).
 | R | 4.6.0 (4.3.2 also present) | `C:\Program Files\R\R-4.6.0\bin\Rscript.exe` | ❌ no |
 | `duckdb` (Python) | 1.5.4 | site-packages | — |
 | `tidyverse` (R) | present | R 4.6.0 library | — |
-| `testthat` (R) | present | R 4.6.0 library | — |
+| `testthat`, `DBI` (R) | present | R 4.6.0 library | — |
+| `duckdb` (R) | 1.5.4.3 — **installed 2026-07-14** | R 4.6.0 library | — |
+| `arrow` (R) | 24.0.0 — **installed 2026-07-14** | R 4.6.0 library | — |
 | `bigrquery` (R) | **absent** | — | — |
-| `arrow` (R) | **absent** | — | — |
 
-**`arrow`'s absence will bite.** D-005 makes the R→Python contract a **Parquet** file, and `arrow` is
-how R writes one. It is not needed for the cleaning functions or their tests (T-005), but it *is*
-needed the moment the ETL produces `phenotypes_v1.parquet`. Install it (`install.packages("arrow")`,
-needs network) before T-003. Falling back to CSV is **not** an option — D-005 rejects CSV precisely
-because it has no types, and the type drift it invites is what the contract exists to prevent.
+**`duckdb` and `arrow` were installed on 2026-07-14 and both were load-bearing:**
+- **`duckdb`** — without it, **R could not read the fixture at all**, so none of the SQL-touching code
+  could be tested offline. That is half of this week's goal ("test it here *and* in All of Us").
+- **`arrow`** — D-012 keeps the phenotype table as a **Parquet** file. A CSV fallback is explicitly
+  rejected: CSV has no types, and the type drift it invites is the thing the contract exists to prevent.
+
+**`bigrquery` is still absent**, and that is fine: it is only needed to talk to BigQuery, which only
+happens inside the Workbench (H-004).
 
 **`bigrquery`'s absence does not block anything offline.** It is only needed by the notebook's
 "Do once" cells, which talk to BigQuery, and those only run inside the All of Us Workbench (H-004).

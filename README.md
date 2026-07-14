@@ -63,15 +63,21 @@ Neither Python nor R is on `PATH` on this machine even though both are installed
 ```
 DESIGN · DECISIONS · ASSUMPTIONS · VALIDATION · TASKS · QUESTIONS · JOURNAL · handoff · loop · GLOSSARY
 configs/    all parameters — no hard-coded thresholds or concept IDs in code
+              config.yaml       cohort, bounds, PREVENT panel
+              ascvd_codes.yaml  THE OUTCOME DEFINITION, in reviewable form
 sql/        BigQuery / DuckDB queries, one per domain
-src/        production logic only:  aou_ascvd/ (Python)  ·  phenotype/ (R)
-tests/      pytest + testthat
+src/        production logic only — ALL R (D-011)
+              phenotype/  the ETL: cleaning, concept dictionary, PREVENT panel, ASCVD events
+              ascvd/      PREVENT, PRS, genetics, statistics, figures
+tests/      testthat
 fixture/    synthetic All of Us CDR — the offline test substrate (spec: FORMAT.md)
 notebooks/  exploratory only; never a dependency of src/
 reports/    generated outputs
 data/       entirely gitignored. real data never lands here.
 ```
 
-Why two languages? The phenotyping ETL is validated R and rewriting it would be pure downside risk;
-everything else is Python. The two halves meet at exactly one artifact — a versioned, schema-validated
-Parquet file — and nowhere else. See **D-002** and **D-005**.
+**The project is all R** (D-011). It was briefly designed as R + Python, on the belief that PREVENT's
+reference implementation was Python — it isn't, the equations are available in R, and once that
+premise fell the split was paying two toolchains for nothing. The phenotype table is still a
+**versioned, schema-validated, immutable Parquet file** (D-012), because that guard was never about
+Python.

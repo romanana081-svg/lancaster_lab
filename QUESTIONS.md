@@ -35,9 +35,57 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ## Q-S — Study design and statistics
 
+### Q-S6 — Cases have a baseline ("before the event"). **What is the baseline for everyone else?**
+- **Priority:** 🔴
+- **Status:** OPEN — **new, and it is the immortal-time trap wearing a different hat**
+- **Why it matters:** D-013 says covariates are taken from *before the event*, and the cohort is then
+  stratified on whether an event occurred. For a person **who has an event**, that is well defined. For
+  a person who **never has one, there is no event to be "before"** — so their baseline has to come from
+  somewhere else, and that choice is not innocent:
+  - If cases are anchored just before their event but non-cases are anchored at, say, their *first*
+    complete panel, then the two groups' covariates are measured at **systematically different points
+    in their disease trajectory**. Cases get a measurement taken when they were already sick — closer
+    to the event, when LDL, BP, and HbA1c are drifting upward. That inflates the apparent
+    predictiveness of every risk factor, and it does so **without any bug appearing anywhere**.
+  - If instead everyone is anchored at their first complete panel, then a case whose panel only exists
+    *because* they were already being worked up for chest pain is still a problem — but a smaller,
+    more familiar one.
+- **The options:**
+  1. **One common anchor for everyone** — e.g. first date at which the full PREVENT panel exists —
+     with cases required to have that anchor *strictly before* their event, and anyone whose panel
+     post-dates their event excluded as prevalent. Symmetric, and it makes the survival model
+     well-posed. This is the conventional design.
+  2. **A fixed landmark time** (e.g. the first complete panel after a calendar date, or after
+     enrollment), which removes the data-driven element more aggressively.
+  3. **Nested case-control / matched sampling** — match each case's anchor to a comparable time in
+     controls. Powerful, but more machinery than this needs.
+- **Leaning:** (1), strongly, with the exclusion rule made explicit. It is what makes "does the model
+  predict the event?" a question about *prediction* rather than about how close to the event we
+  happened to measure.
+- **To resolve:** **ask the advisor** — this is a five-minute conversation and it changes the ETL. It
+  is a genuine gap in the design as stated, not a quibble: the phrase "only consider data before the
+  event" simply does not define a baseline for the ~95% of people who have no event.
+- **Deadline:** before the cohort is built (T-002). Everything downstream inherits it.
+
+### Q-S7 — Is there an upper age limit?
+- **Priority:** 🟡
+- **Status:** OPEN
+- **Why it matters:** the advisor specified **age ≥ 30** ("as described in the PREVENT equations").
+  PREVENT is validated for **30–79**. Applying it above 79 means extrapolating a model outside the
+  range it was fitted in, where its calibration is unknown.
+- **The options:** cap at 79 (matches PREVENT's validation, loses the oldest participants); no cap
+  (keeps N, extrapolates); or no cap but report ≥ 80 as a separate stratum.
+- **Leaning:** cap at 79 for the primary analysis. It is what the equations claim to support, and the
+  ≥ 80 group can be reported separately if it is large enough to be interesting.
+- **To resolve:** confirm with the advisor — it may simply have been shorthand for "PREVENT's range".
+- **Deadline:** before T-002.
+
 ### Q-S1 — What is the index date (time zero)?
 - **Priority:** 🔴
-- **Status:** OPEN
+- **Status:** **PARTIALLY RESOLVED 2026-07-14 (D-013)** — the advisor settled that covariates come from
+  *before the event* and the cohort is stratified on the event. That answers the question **for cases**.
+  It does **not** define a baseline for people who never have an event, which is now tracked separately
+  and is still open: **see Q-S6.** The immortal-time concern below has not gone away; it has moved.
 - **Why it matters:** Time zero defines *everything*: who is eligible, which measurements count as
   "baseline", how long each person is followed, and whether the study is biased before a single model
   is fitted. It is the most consequential unmade decision in the project.
@@ -144,7 +192,13 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ### Q-A1 — What exactly counts as an incident ASCVD event?
 - **Priority:** 🔴
-- **Status:** OPEN — **needs an advisor** (H-003)
+- **Status:** ✅ **RESOLVED 2026-07-14 (D-014).** ASCVD is ascertained from **both** ICD diagnosis codes
+  and CPT procedure codes, and the codes are **resolved through the All of Us vocabulary** rather than
+  used as opaque IDs — so that event *timing* and disease *type/stage* can both be read off them
+  (T-014, T-015). The discussion below is kept because one part of it is **not** settled by that
+  decision and still has to be reported on: a **revascularisation is a treatment decision, not purely a
+  disease event**, and it is confounded by healthcare access. The dictionary makes it possible to
+  report the outcome with and without procedures; doing so is part of T-015.
 - **Why it matters:** The outcome definition is the dependent variable. Everything — power, effect
   size, comparability to PREVENT's own derivation — hangs on it. PREVENT was derived against a
   specific composite (CVD death, non-fatal MI, non-fatal stroke, and in its broader form heart

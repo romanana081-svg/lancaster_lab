@@ -31,31 +31,75 @@ cohort:
   # CDR v7 srWGS count (~245,394).
   require_srwgs: true                       # has_whole_genome_variant = 1 in cb_search_person
 
-  age_min: 30                               # PREVENT's validated range
-  age_max: 79
+  # SETTLED by the advisor, D-013.
+  age_min: 30                               # per the PREVENT equations
+  age_max: UNRESOLVED                       # Q-S7: PREVENT is validated for 30-79. The advisor said
+                                            # ">= 30". Above 79 we are extrapolating outside the range
+                                            # the model was fitted in. Probably shorthand -- confirm.
 
-  # PREVENT is a PRIMARY PREVENTION model — it is undefined for people who already have ASCVD.
+  # COMPLETE-CASE. A participant is eligible ONLY if every PREVENT input is present; incomplete
+  # participants are EXCLUDED, not imputed (D-013).
+  #
+  # !! This is not a neutral filter (A-015, RISK 🔴). Having lipids AND a blood pressure AND a
+  # creatinine AND a smoking status recorded is a marker of SUSTAINED HEALTHCARE CONTACT. The excluded
+  # skew toward sparse-EHR participants, which tracks access, socioeconomic status, and ancestry --
+  # so cohort membership becomes entangled with the very genetics we intend to study (A-011).
+  # MEASURE IT: the attrition table must compare included vs excluded (T-002).
+  require_complete_prevent_panel: true
+
+  # PREVENT is a PRIMARY PREVENTION model -- it is undefined for people who already have ASCVD.
   # Including prevalent cases inflates apparent prediction accuracy (DESIGN §2).
   exclude_prior_ascvd: true
 
-  # OPEN — Q-S1. The convenient answer ("first visit with all PREVENT inputs") is the one that
-  # builds immortal time bias into the design. Do not default to it silently. BLOCKS T-002.
-  index_date: UNRESOLVED                    # first_complete_prevent | enrollment | fixed_date | age_scale
+  # Covariates come from BEFORE the event; the cohort is stratified on whether an event occurred
+  # (D-013). That defines a baseline FOR CASES. It defines NOTHING for the people who never have an
+  # event -- and they are most of the cohort. See Q-S6 (🔴, needs the advisor): if cases are anchored
+  # just before their event while non-cases are anchored elsewhere, every risk factor looks more
+  # predictive than it is, AND NO BUG APPEARS ANYWHERE.
+  baseline_for_cases: before_event
+  baseline_for_non_cases: UNRESOLVED        # Q-S6 -- BLOCKS T-002
 
   # OPEN — Q-A2. Absence of an EHR code is treated as absence of disease (A-006), and that
-  # assumption is weakest for people who barely appear in the EHR. Non-random misclassification.
+  # assumption is weakest for people who barely appear in the EHR.
   min_followup_years: UNRESOLVED
   min_visits: UNRESOLVED
 
 # ---------------------------------------------------------------------------------------------
-# Outcome  (OPEN — Q-A1, needs an advisor: H-003)
+# Outcome  (SETTLED by the advisor — D-014)
 # ---------------------------------------------------------------------------------------------
-# If our outcome is not the outcome PREVENT predicts, PREVENT's linear predictor is not a valid
-# offset for it, and the primary model (D-006) is undermined at the root.
+# ASCVD from BOTH billing/diagnosis (ICD) and procedure (CPT) codes. Codes are RESOLVED through the
+# All of Us vocabulary rather than used as opaque IDs, so that event timing and disease type/stage can
+# be read off them. The definition itself is in a file you can actually read:
 outcome:
-  definition: UNRESOLVED                    # prevent_composite | hard_ascvd | any_coronary_incl_revasc
+  definition: ascvd_icd_and_cpt
+  code_map: configs/ascvd_codes.yaml        # <- the outcome, in reviewable form
+  sources: [condition_occurrence, procedure_occurrence]
+
+  # A revascularisation is a TREATMENT DECISION, not purely a disease event, and it is confounded by
+  # healthcare access. Including it inflates the event count; excluding it loses real events. So the
+  # primary analysis is reported BOTH WAYS rather than us guessing (Q-A1, T-015).
+  include_revascularisation: report_both
+
   horizon_years: 10                         # PREVENT provides both 10y and 30y
   competing_risk: non_ascvd_death           # Fine-Gray sensitivity analysis (T-010)
+
+# ---------------------------------------------------------------------------------------------
+# PREVENT inputs  (D-004, D-013)
+# ---------------------------------------------------------------------------------------------
+# The panel. D-013 excludes anyone missing ANY of these, so THE COMPLETENESS RATE IS THE SAMPLE SIZE
+# (A-016). Count it before building anything else -- T-017.
+prevent_inputs:
+  required: [age, sex, total_cholesterol, hdl_c, systolic_bp, antihypertensive_use,
+             diabetes, current_smoking, egfr, bmi]
+
+  # eGFR is DERIVED, not measured: serum creatinine -> CKD-EPI 2021.
+  # Use the RACE-FREE 2021 equation. The older race-adjusted version would smuggle race back into a
+  # model that was deliberately built without it (D-004) -- a real scientific error, not a nit.
+  egfr_equation: ckd_epi_2021_race_free
+
+  # Extended PREVENT adds HbA1c / UACR / social deprivation index. Every extra input SHRINKS THE
+  # COHORT under complete-case (D-013), so which variant we use is a real decision -- H-002.
+  model_variant: UNRESOLVED                 # base | extended
 
 # ---------------------------------------------------------------------------------------------
 # Physiologic bounds  (A-004)

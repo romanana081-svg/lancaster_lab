@@ -52,7 +52,9 @@ question, and the answer must not depend on anyone's memory.
 
 ## D-002 — Bilingual stack: R for phenotyping ETL, Python for modelling and statistics
 
-- **Status:** ACCEPTED
+- **Status:** ⛔ **SUPERSEDED BY D-011 (2026-07-14)** — the project is now all-R. Kept in full, per the
+  append-only rule: the reasoning below is still the reason the *ETL* is in R, and only the Python half
+  went away.
 - **Date:** 2026-07-13
 - **Context:** The project brief says "prefer modular Python packages over notebooks; production
   logic belongs in `src/`". But the one asset that already exists and works is
@@ -139,7 +141,9 @@ question, and the answer must not depend on anyone's memory.
 
 ## D-005 — The R→Python boundary is one versioned, schema-validated Parquet file
 
-- **Status:** ACCEPTED
+- **Status:** ⛔ **SUPERSEDED BY D-012 (2026-07-14)** — there is no longer an R→Python boundary to
+  guard. The *versioning, schema validation, and immutability* survive; only the cross-language
+  rationale is gone.
 - **Date:** 2026-07-13
 - **Context:** D-002 creates two halves that must exchange data. Left informal, this boundary becomes
   the place bugs hide: a column silently renamed, units changed from mg/dL to mmol/L, an integer
@@ -211,6 +215,117 @@ question, and the answer must not depend on anyone's memory.
   pre-specified.
 - **Expected impact:** Harder to over-claim; harder to under-claim. Cost: more analysis, more figures.
 - **Links:** DESIGN.md §6.2, `src/aou_ascvd/stats/`, Q-S3.
+
+---
+
+## D-011 — The project is **all R**. The Python half is dropped.
+
+- **Status:** ACCEPTED · **Supersedes:** D-002
+- **Date:** 2026-07-14 (advisor meeting)
+- **Context:** D-002 split the project in two — R for the ETL, Python for PREVENT, statistics, and
+  figures — on the reasoning that PREVENT's reference implementation and the best survival/calibration
+  tooling were Python. **That premise is false: the PREVENT equations are available in R.** With it
+  gone, the entire argument for the split collapses, and the user (who will be doing the work) is
+  working solely in R.
+- **Alternatives:** keep the split (now paying two toolchains, two test frameworks, and a serialisation
+  boundary for *no* remaining benefit); or go all-R.
+- **Reasoning:** D-002 accepted a real, recorded cost — "two toolchains, two dependency systems, two
+  test runners, a serialization boundary" — and it bought exactly one thing: access to Python's
+  modelling ecosystem. That thing turned out not to be needed. Paying a cost for a benefit that does
+  not exist is the easiest kind of decision to reverse. R's survival stack (`survival`, `rms`,
+  `riskRegression`, `timeROC`, `dcurves`) covers every method in DESIGN §6.
+- **Decision:** **All analysis code is R.** `src/aou_ascvd/` (Python) is deleted before it is ever
+  written. Everything lives in `src/phenotype/` (ETL) and a new `src/ascvd/` (PREVENT, statistics,
+  figures). Tests are `testthat` only; `pytest` is dropped.
+- **Scope note — the fixture *builder* stays Python.** `fixture/build/*.py` is **test tooling, not
+  analysis**: it generates a synthetic DuckDB CDR and replays the pipeline to diff against an answer
+  key. It works, it is not on the scientific path, and rewriting it in R would be pure risk for zero
+  scientific payoff — the same argument D-002 made for *keeping* the R ETL, applied symmetrically.
+  It stays until there is a reason to touch it.
+- **Expected impact:** *Easier:* one language, one test runner, one dependency system; no serialisation
+  boundary; the author can actually read every line. *Harder:* R's decision-curve and
+  time-dependent-AUC tooling is thinner than Python's, and we lose `lifelines`/`scikit-survival` as a
+  cross-check. If a specific method proves unavailable in R, that is a new decision, not a licence to
+  quietly reintroduce Python.
+- **Links:** D-002 (superseded), D-012, T-016, `src/ascvd/`.
+
+---
+
+## D-012 — The phenotype table stays versioned, schema-validated, and immutable — now within R
+
+- **Status:** ACCEPTED · **Supersedes:** D-005
+- **Date:** 2026-07-14
+- **Context:** D-005 made the phenotype table a Parquet file with a JSON schema, validated on both
+  sides, because it was the seam between two languages and seams are where silent bugs live. D-011
+  removes the seam.
+- **Reasoning:** the *cross-language* rationale is gone, but **none of the other reasons were about
+  language.** A schema still turns a renamed column, a mg/dL→mmol/L unit drift, or a duplicated
+  `person_id` into a loud failure instead of a quietly wrong number. Versioning still keeps last
+  month's analysis reproducible. Those protections were never Python's doing, and dropping them
+  because the language changed would be throwing away the guard along with the thing it guarded.
+- **Decision:** the ETL still writes **`phenotypes_v<N>.parquet`**, still validated against
+  `configs/phenotype_schema.json` **on write and on read**, still immutable (a new version never
+  overwrites an old one). Validation is now R-side only (one gate instead of two). Parquet is retained
+  over `.rds` because the genetics tooling arriving next week (PRS, variant burden) is not all R, and
+  a typed, language-neutral file costs nothing to keep.
+- **Expected impact:** we keep every protection that mattered. Cost: **R `arrow` must be installed** —
+  it currently is not (`docs/environment.md`), and a CSV fallback is explicitly rejected for the same
+  reason D-005 rejected it: CSV has no types.
+- **Links:** D-005 (superseded), D-011, `configs/phenotype_schema.json`, T-003.
+
+---
+
+## D-013 — Cohort: age ≥ 30, complete PREVENT inputs, no ASCVD before baseline
+
+- **Status:** ACCEPTED · **Resolves:** Q-A1's population half
+- **Date:** 2026-07-14 (advisor meeting)
+- **Context:** DESIGN §2 had the population "proposed" and the index date open. The advisor settled it.
+- **Decision:**
+  1. **Age ≥ 30** at baseline, per PREVENT's own validated range.
+  2. **Complete-case:** a participant is eligible **only if every PREVENT input is available**.
+     Participants missing any input are **excluded** — not imputed.
+  3. **No ASCVD before baseline** — PREVENT is a primary-prevention model and is undefined for people
+     who already have the disease.
+  4. Covariates are taken from **before the event**; the cohort is then **stratified on whether an
+     event occurred**, to ask whether the model predicts it.
+- **Expected impact — and the cost is real, so it is recorded and not buried:** complete-case
+  restriction is *not* a neutral filter. Having a full PREVENT panel (lipids **and** SBP **and**
+  creatinine **and** smoking **and** diabetes status) is a marker of **sustained healthcare contact**.
+  The excluded are disproportionately people with sparse EHR — which tracks insurance, access, and
+  therefore socioeconomic status and ancestry. So the analysis cohort is a healthier, better-monitored
+  subset than All of Us as a whole, and **generalisability is limited accordingly**. This is
+  recorded as **A-015 (🔴)**, and the mitigation is to *quantify* it: compare included vs. excluded on
+  the variables we do observe, and report it as an attrition table (T-002). Note it also interacts with
+  A-011: if completeness correlates with ancestry, so does cohort membership.
+- **Links:** A-015; Q-S1; Q-S6; Q-S7; T-002; T-003; `configs/config.yaml`.
+
+---
+
+## D-014 — ASCVD events are ascertained from **both** ICD conditions and CPT procedures, via a resolved concept dictionary
+
+- **Status:** ACCEPTED · **Resolves:** Q-A1's outcome half
+- **Date:** 2026-07-14 (advisor meeting)
+- **Context:** Q-A1 was blocking everything: PREVENT's linear predictor is only a valid offset for the
+  outcome PREVENT was built to predict, so the outcome definition had to be settled by someone with
+  domain authority.
+- **Decision:** ASCVD is ascertained from **both** billing/diagnosis codes (ICD, via
+  `condition_occurrence`) **and** procedure codes (CPT, via `procedure_occurrence`). Both are pulled,
+  both are analysed. Crucially, the codes are **not** treated as opaque IDs: we build tooling that
+  **resolves each `concept_id` back to its code and its meaning in the All of Us vocabulary** and then
+  uses that to establish (a) **when** the event occurred and (b) **what disease type / stage** it
+  represents.
+- **Reasoning:** a concept ID is meaningless on its own, and All of Us's vocabulary is the only
+  authority on what a given ID actually denotes. The existing notebook hardcodes long lists of concept
+  IDs pasted from the Cohort Builder with **no record of what they mean** — which is exactly why a
+  wrong or stale ID returns zero rows *with no error*. Resolving codes to names makes the outcome
+  definition **inspectable and reviewable** rather than a wall of integers, and it is what lets us
+  distinguish an acute MI from a chronic ischemic-heart-disease code from a revascularisation
+  procedure — a distinction the current `codes_df` collapses entirely.
+- **Expected impact:** the outcome becomes auditable. It also surfaces a question the old pipeline hid:
+  **a revascularisation (CPT) is a treatment decision, not purely a disease event**, and it is
+  confounded by healthcare access. Including it inflates event counts; excluding it loses real events.
+  The dictionary is what lets us report both.
+- **Links:** Q-A1 (resolved); T-014; T-015; `src/phenotype/R/concept_dictionary.R`.
 
 ---
 

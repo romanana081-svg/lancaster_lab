@@ -58,7 +58,31 @@ so that nothing sits idle waiting for an answer that could have been worked arou
   about to become public**, which remains the right default.
 - **See:** A-012 (cleared), A-014 (accepted), Q-R1, Q-R3 (resolved), D-010, T-012 (done), T-013 (closed).
 
-## 🔴 H-003 — Advisor sign-off on the outcome definition and the index date
+## 🟢 H-003 — Advisor sign-off on the outcome definition and the index date — **RESOLVED 2026-07-14**
+
+- **Resolution:** the advisor meeting happened. Both blocking definitions are settled:
+  - **Outcome (Q-A1) → D-014.** ASCVD from **both** ICD diagnosis codes and CPT procedure codes, with
+    the codes **resolved through the All of Us vocabulary** so that event timing and disease type/stage
+    can be read off them, rather than treated as opaque IDs.
+  - **Population (Q-S1, partly) → D-013.** Age ≥ 30, **complete PREVENT panel required** (no
+    imputation — incomplete participants are excluded), no ASCVD before baseline. Covariates come from
+    before the event; the cohort is stratified on whether an event occurred.
+- **The analysis path is unblocked.** T-002 can proceed.
+- **⚠️ But the meeting also opened two new questions that only the advisor can close, and one of them
+  is 🔴:**
+  - **Q-S6 — what is the baseline for people who never have an event?** "Use data before the event"
+    defines a baseline for cases and *nothing at all* for everyone else. If cases end up anchored just
+    before their event while non-cases are anchored at their first complete panel, every risk factor
+    looks more predictive than it is — and **no bug appears anywhere**. This needs five minutes with
+    the advisor and it changes the ETL.
+  - **Q-S7 — is there an upper age limit?** "Age ≥ 30" was specified; PREVENT is validated for
+    **30–79**. Above 79 the model is being extrapolated outside its fitted range. Probably shorthand,
+    worth confirming.
+- **See:** D-013, D-014, Q-S6, Q-S7, A-015.
+
+---
+
+## 🟢 H-003 (original entry) — Advisor sign-off on the outcome definition and the index date
 
 - **Needed from:** the project advisor / an epidemiologist.
 - **Why it is blocking:** two of the three definitions that determine everything downstream are open
@@ -83,20 +107,27 @@ so that nothing sits idle waiting for an answer that could have been worked arou
   useful preparation available.
 - **See:** Q-S1, Q-A1, Q-A2; T-002; DESIGN §2.
 
-## 🟠 H-002 — The PREVENT paper, its supplement, and its worked examples
+## 🟠 H-002 — The PREVENT reference implementation (R), and the paper's worked examples
 
-- **Needed from:** anyone with journal access (Khan SS et al., *Circulation*, 2024).
-- **Why it will block:** T-006 must implement PREVENT and **validate it against the published example
-  risk values** — that external ground-truth check is the gate on the whole model half (VALIDATION §1).
-  It requires three things from the paper: (a) the sex-specific coefficient tables, (b) the worked
-  examples with their expected risk outputs, and (c) an unambiguous statement of the input units and
-  which model variant we are using (the base equation, or the extended one with HbA1c / UACR / social
-  deprivation index — All of Us may not support the extended inputs).
-- **Proceeding without it:** the surrounding structure — schema, I/O, tests, the offset machinery — can
-  all be built against a stub. But **no coefficient may be typed in from memory or from a secondary
-  source.** Transcribing published coefficients is the kind of task that feels trivial and produces
-  silent, total, undetectable error. It waits for the primary source.
-- **See:** D-004; T-006; `src/aou_ascvd/prevent/`.
+- **Needed from:** the advisor (who has the R implementation), plus journal access for validation
+  (Khan SS et al., *Circulation*, 2024).
+- **Updated 2026-07-14:** the advisor says **the PREVENT equations are already in R** — which is what
+  killed the bilingual split (D-011). So the implementation may not need writing at all. What is needed:
+  1. **The R implementation itself** — is it a published package (there is a `preventr` package on
+     CRAN), the advisor's own code, or code from the paper's supplement? This determines whether T-016
+     is "install and validate" or "write and validate".
+  2. **The paper's worked examples** — regardless of where the code comes from, VALIDATION §1 layer 3
+     stands: **it must reproduce the published example risk values to within rounding.** Borrowed code
+     is not validated code; it is just code someone else wrote.
+  3. **Which model variant** — the base equation, or the extended one with HbA1c / UACR / social
+     deprivation index. This directly sets the required phenotype list (D-013 excludes anyone missing
+     *any* input, so **every extra input shrinks the cohort**), and therefore it must be decided before
+     the ETL is built, not after.
+- **Proceeding without it:** the ETL, the concept dictionary, and the fixture extension are all
+  unblocked and are this week's work. **No coefficient gets typed in from memory or a secondary
+  source** — that is the one task where a silent transcription error invalidates every downstream
+  result.
+- **See:** D-004; D-011; T-016; `src/ascvd/`.
 
 ## 🟠 H-004 — All of Us Workbench access and a billing project
 

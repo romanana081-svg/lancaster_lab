@@ -22,6 +22,68 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-14 (advisor meeting) — The project turns: all R, cohort and outcome settled
+
+**Did:** Rewrote the project's spine around the advisor's decisions, and started this week's code.
+
+**Decided (four new D-entries, two supersessions):**
+
+- **D-011 — the project is ALL R.** D-002 had split it in two, and the *entire* justification for the
+  Python half was that PREVENT's reference implementation and the good survival tooling lived there.
+  **That premise was false — the equations are available in R.** Once the benefit evaporated, the split
+  was paying two toolchains, two test frameworks, and a serialisation boundary for nothing. Reversed.
+  `src/aou_ascvd/` (Python) was deleted before a line of it was ever written; `src/ascvd/` (R) replaces
+  it. *The fixture builder stays Python* — it is test tooling, not analysis, and rewriting a working
+  harness is risk with no scientific payoff, which is the same argument D-002 originally made for
+  keeping the R ETL.
+- **D-012 — the phenotype table stays versioned, schema-validated, and immutable**, now within R.
+  Worth being deliberate about: it would have been easy to drop the schema along with the language
+  boundary it was written for. But **none of those protections were ever about Python.** A schema is
+  what turns a renamed column or an mg/dL→mmol/L drift into a crash instead of a quietly wrong number,
+  and that is just as necessary inside one language.
+- **D-013 — cohort:** age ≥ 30, **complete PREVENT panel required** (excluded, not imputed), no prior
+  ASCVD. Covariates from before the event; stratify on the event.
+- **D-014 — outcome:** ASCVD from **both** ICD and CPT codes, with concept IDs **resolved through the
+  All of Us vocabulary** so that event timing and disease type/stage can be read off them.
+
+**Built:** `concept_dictionary.R` (T-014) — `resolve_concepts()` turns concept IDs into codes and
+meanings, and **an unresolvable ID is a hard error**. That matters more than it sounds: a stale concept
+ID returns **zero rows with no error**, so the phenotype quietly empties and the number at the end of
+the pipeline is wrong but plausible. Plus `configs/ascvd_codes.yaml` — the outcome definition written
+so a human can *read* it, with acute events, chronic disease, and revascularisation kept apart.
+**59 testthat tests pass**, including tests that run against the real fixture DuckDB.
+
+**Learned — three things, and two of them are problems:**
+
+1. **The fixture contains almost none of the PREVENT panel.** Counted it: LDL (278 rows),
+   triglycerides (202), BMI (170), and exactly **one** HDL row and **one** total-cholesterol row.
+   **No systolic BP, no serum creatinine, no HbA1c, no smoking, no antihypertensives.** So "test the
+   PREVENT extractor offline" is currently impossible — there is nothing to extract. T-004 is promoted
+   from housekeeping to a **hard prerequisite** for this week's goal.
+2. **R could not read the fixture at all** — the `duckdb` R driver was not installed. Installed it (and
+   `arrow`, which D-012's Parquet contract needs). Both were silently blocking, and neither was in any
+   document.
+3. **D-013 opens a hole that the advisor's phrasing hides — Q-S6 (🔴).** "Use data from before the
+   event" defines a baseline for people who *have* an event. **Most participants never have one**, so
+   for them it defines nothing. If cases end up anchored just before their event while non-cases are
+   anchored at, say, their first complete panel, then cases' risk factors get measured *closer to their
+   disease* — and **every predictor looks stronger than it is, with no bug appearing anywhere.** This
+   is the immortal-time problem wearing a different hat. It needs five minutes with the advisor and it
+   changes the ETL, so it is asked now rather than discovered in the results.
+
+**Also flagged (A-015, 🔴):** the complete-panel requirement is **not a neutral filter**. Having
+lipids *and* a BP *and* a creatinine *and* a smoking status on file is a marker of sustained healthcare
+contact — so the excluded skew toward sparse-EHR participants, which tracks access, socioeconomic
+status, and ancestry. In a study whose whole point is genetics in a deliberately diverse cohort, that
+means **cohort membership is entangled with ancestry**, which is a route to a spurious genetic finding
+(A-011). It is measurable, and the attrition table in T-002 must measure it — before the PRS work
+starts.
+
+**Next:** T-017 (count PREVENT panel completeness in the real CDR — one query, and it decides whether
+the design is even feasible), then T-015 (ASCVD events), T-003 (the PREVENT extractor), T-004 (fixture).
+
+---
+
 ## 2026-07-14 (later) — Two decisions taken; the tie-break is fixed
 
 **Did:** Put the two open decisions to the user and implemented both.

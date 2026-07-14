@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Read `DESIGN.md` first.** This file describes the *legacy notebook*. The project around it has
+> moved on, and two things below are load-bearing:
+>
+> - **The project is ALL R** (D-011). There is no Python half. `src/phenotype/` (ETL) and `src/ascvd/`
+>   (PREVENT, statistics) are both R; tests are `testthat`. The only Python left is
+>   `fixture/build/*.py`, which is test tooling, not analysis.
+> - **The study is no longer the LDLR study.** It is: *do low-frequency variants improve ASCVD
+>   prediction beyond the AHA PREVENT equations?* The notebook below extracts LDL, triglycerides, and
+>   CAD codes — **none of which are PREVENT inputs**. Do not assume its phenotypes are the ones we
+>   need. See `TASKS.md`.
+>
+> Neither Python nor R is on `PATH` on this machine even though both are installed — see
+> `docs/environment.md` for the working invocations.
+
 ## What this repository is
 
 A single **R** Jupyter notebook (`LDLR Get phenotypes.ipynb`, kernel `ir`) that builds a phenotype

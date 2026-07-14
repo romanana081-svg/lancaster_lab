@@ -1,0 +1,84 @@
+# ascvd_codes.yaml — the ASCVD outcome definition, in a form a human can actually review. D-014.
+#
+# This file IS the outcome. It is deliberately readable, because an outcome definition you cannot read
+# is an outcome definition nobody can check — and the previous pipeline's definition was a wall of
+# concept IDs with no record of what any of them meant.
+#
+# Matching is by CODE PREFIX against the vocabulary (ICD10CM, CPT4), resolved through
+# `resolve_concepts()`. We match on codes rather than concept IDs because codes are stable and
+# meaningful; concept IDs are neither, and they change between CDR versions.
+#
+# FIRST MATCH WINS, so order matters: acute before chronic.
+
+ascvd:
+  # ------------------------------------------------------------------------------------------------
+  # ACUTE EVENTS — this is what PREVENT actually predicts.
+  # A first-ever code here is a genuine EVENT DATE.
+  # ------------------------------------------------------------------------------------------------
+  - code_prefix: "I21"     # acute myocardial infarction
+    class: acute_event
+    note: "STEMI/NSTEMI. The canonical hard ASCVD endpoint."
+  - code_prefix: "I22"     # subsequent MI
+    class: acute_event
+  - code_prefix: "I23"     # certain current complications following acute MI
+    class: acute_event
+  - code_prefix: "I24"     # other acute ischemic heart disease
+    class: acute_event
+  - code_prefix: "I63"     # cerebral infarction (ischemic stroke)
+    class: acute_event
+    note: "Stroke is part of PREVENT's composite. I63 is ischemic; I61/I60 are haemorrhagic and are
+           NOT atherosclerotic -- do not add them without a decision."
+
+  # ------------------------------------------------------------------------------------------------
+  # CHRONIC / STABLE DISEASE — the person HAS ASCVD, but a first code here is a DIAGNOSIS date,
+  # not necessarily an EVENT date. Treating it as an event date is a real way to get timing wrong,
+  # and it is one of the things the old binary `CAD_code` silently did.
+  #
+  # These are what make someone PREVALENT (and therefore EXCLUDED at baseline, D-013) -- they are not
+  # automatically incident events.
+  # ------------------------------------------------------------------------------------------------
+  - code_prefix: "I25"     # chronic ischemic heart disease
+    class: chronic_disease
+  - code_prefix: "I20"     # angina pectoris
+    class: chronic_disease
+  - code_prefix: "I70"     # atherosclerosis
+    class: chronic_disease
+  - code_prefix: "I73"     # other peripheral vascular disease
+    class: chronic_disease
+  - code_prefix: "Z95.1"   # presence of aortocoronary bypass graft -- history, not an event
+    class: chronic_disease
+  - code_prefix: "Z95.5"   # presence of coronary angioplasty implant/graft
+    class: chronic_disease
+
+  # ------------------------------------------------------------------------------------------------
+  # REVASCULARISATION (CPT) — READ THIS BEFORE USING IT.
+  #
+  # A revascularisation is a TREATMENT DECISION, not purely a disease event. Two people with the same
+  # coronary anatomy and different insurance get different codes. So this class is confounded by
+  # healthcare access -- which, in a cohort selected on having a complete EHR panel (A-015), is
+  # confounded with the very things we are trying to adjust for.
+  #
+  # Including it inflates the event count; excluding it loses real events. That is why it is a
+  # SEPARATE CLASS and not folded into acute_event: the primary analysis must be reportable BOTH WITH
+  # AND WITHOUT it (Q-A1, T-015).
+  # ------------------------------------------------------------------------------------------------
+  - code_prefix: "929"     # 92920-92944: PCI (angioplasty, stent)
+    class: revascularisation
+  - code_prefix: "33510"   # CABG, venous
+    class: revascularisation
+  - code_prefix: "33533"   # CABG, arterial
+    class: revascularisation
+
+# Codes that look cardiac but are NOT atherosclerotic. Listed explicitly so that nobody "helpfully"
+# adds them later: they would contaminate the outcome with a different disease process.
+excluded_deliberately:
+  - code_prefix: "I60"
+    reason: "subarachnoid haemorrhage -- haemorrhagic, not atherosclerotic"
+  - code_prefix: "I61"
+    reason: "intracerebral haemorrhage -- haemorrhagic, not atherosclerotic"
+  - code_prefix: "I26"
+    reason: "pulmonary embolism -- thrombotic but not atherosclerotic ASCVD"
+  - code_prefix: "I50"
+    reason: "heart failure -- in PREVENT's BROADER CVD composite but not in hard ASCVD. Including it
+             is a real choice with real consequences for the event count; it needs a decision, not a
+             quiet addition."

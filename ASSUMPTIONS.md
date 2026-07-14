@@ -210,6 +210,54 @@ adopt without noticing.
   answer key together — which is why it is a decision (Q-R3), not a tidy-up. It also runs straight into
   the CLAUDE.md rule against silently "fixing" the notebook's load-bearing quirks.
 
+### A-015 — Restricting to participants with a complete PREVENT panel does not bias the study
+- **Risk:** 🔴
+- **Status:** **UNVERIFIED — and we should expect it to be partly false**
+- **Where it bites:** D-013's eligibility rule. A participant is in the cohort **only if every PREVENT
+  input is present** (lipids *and* SBP *and* creatinine *and* smoking *and* diabetes status);
+  otherwise they are excluded, not imputed. This sets who the study is *about*.
+- **Why we assume it:** PREVENT cannot be evaluated on someone whose inputs are missing, and imputing
+  five clinical variables introduces its own, harder-to-audit assumptions. The advisor chose exclusion.
+- **Why it is probably partly false:** **having a complete panel is itself a phenotype.** It means
+  sustained contact with a health system — routine labs, a measured blood pressure, a recorded smoking
+  status. The people excluded are disproportionately those with sparse EHR, which tracks insurance,
+  access, and therefore socioeconomic status and ancestry. So the analysis cohort is **healthier and
+  better-monitored than All of Us as a whole**, and it is *not* a random subset.
+- **How to test it:** this is measurable and must be measured. Compare included vs. excluded on
+  everything we *can* see for both — age, sex, race, ancestry PCs, visit count, follow-up duration,
+  and event rate. If they differ materially (they will), the size of the difference bounds the
+  generalisability claim. This is the attrition table in T-002 and it is not optional.
+- **If it's wrong:** two distinct consequences, and they are not equally bad.
+  1. **Generalisability** — the result applies to well-monitored All of Us participants, not to
+     everyone. Survivable, if stated.
+  2. **The dangerous one** — it interacts with **A-011** (ancestry). All of Us is deliberately
+     ancestrally diverse, and that diversity is the main reason to use it. If EHR completeness
+     correlates with ancestry, then **cohort membership correlates with ancestry**, and any genetic
+     signal we find is measured in a population selected in a way that is entangled with the genetics.
+     That is a route to a spurious finding, and it is exactly the failure mode the PRS work starting
+     next week would walk into.
+- **Mitigation:** report the attrition table; report results stratified by ancestry (already planned,
+  T-007); and consider a sensitivity analysis with a *less* strict panel requirement to see whether
+  the conclusion moves. See also Q-A2.
+
+### A-016 — The PREVENT inputs are ascertainable from All of Us EHR at usable completeness
+- **Risk:** 🔴
+- **Status:** **UNVERIFIED — and it decides whether the study is feasible at all**
+- **Where it bites:** everything. D-013 excludes anyone without a complete panel, so **the completeness
+  rate *is* the sample size.** PREVENT needs total cholesterol, HDL-C, systolic BP, antihypertensive
+  use, diabetes, current smoking, eGFR (serum creatinine), BMI, age, and sex.
+- **Why we assume it:** these are routine clinical variables and All of Us has EHR for most
+  participants.
+- **Why it is not safe to assume:** the current pipeline extracts **only BMI** of that list. Nobody has
+  yet counted how many srWGS participants have *all ten*. Smoking status in particular is often survey-
+  rather than EHR-derived, and serum creatinine may be sparser than lipids.
+- **How to test it:** **do this first, before building anything else.** Count, in the real CDR, how
+  many srWGS participants aged ≥ 30 have each PREVENT input, and how many have the full set. The
+  intersection is the cohort. This is one query and it decides the scale of the entire project.
+- **If it's wrong:** if the complete-panel cohort is small, the study may be underpowered before
+  genetics is even added (Q-S4), and the response is a design change — a relaxed panel, imputation, or
+  a broader outcome — **not** a shrug. Better to learn this in week one than in month three.
+
 ### A-013 — The synthetic fixture is representative enough to validate the ETL
 - **Risk:** 🟡
 - **Status:** ACCEPTED-AS-LIMITATION
