@@ -77,10 +77,16 @@ understood well enough to start (see [`VALIDATION.md`](VALIDATION.md)).
   H-001 turned out to be a non-blocker). Defaults are **bit-compatible with the notebook**: nothing is
   silently improved. The tests pin the *known bugs* as well as the wanted behaviour, so neither can
   change by accident — including the lowercase-`mg/dl` data loss (A-003) and the arbitrary tie-break.
-- **Still to do:** (a) **the tie-break decision** — `mean` / `median` / `min` / `max` are all
-  implemented and deterministic; *which one we adopt* is a scientific choice and is unresolved
-  (`configs/config.yaml: record_selection.same_day_tiebreak`); (b) the remaining domains (conditions,
-  drugs, survey, demographics, censoring); (c) the end-to-end fixture test.
+- **Progress 2026-07-14 (later):** the tie-break decision is **settled — D-009, `mean`** — and
+  `clean_codes()` / `combine_codes()` / `as_binary_phenotype()` now cover the code-based phenotypes
+  (CAD, PAD, FH, hypercholesterolemia), including the notebook's ICD ∪ CPT union for CAD.
+  **45 `testthat` tests pass.**
+- **Still to do:** (a) the drug + survey domain — this is where the **`any_chol_med` defect** lives
+  (a survey "No" is scored as a *user*), so fixing it is the substantive part, not a port;
+  (b) demographics and the censoring/`censor_type` logic (the notebook's IN PROGRESS section);
+  (c) the Parquet writer — **needs R `arrow`, which is not installed** (D-005 rejects a CSV fallback);
+  (d) the end-to-end fixture test, at which point the answer key's `one_of:130|131|132` tightens
+  to `131`.
 - **Why:** D-002 keeps the ETL in R precisely because it is validated; but validated logic living in a
   notebook cannot be imported, tested, or reused, and the notebook does not even execute cleanly
   top-to-bottom (CLAUDE.md). Moving it into a package is what turns "it worked once in the cloud" into
