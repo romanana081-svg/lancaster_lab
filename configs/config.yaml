@@ -31,11 +31,10 @@ cohort:
   # CDR v7 srWGS count (~245,394).
   require_srwgs: true                       # has_whole_genome_variant = 1 in cb_search_person
 
-  # SETTLED by the advisor, D-013.
+  # SETTLED by the advisor, D-013 / D-015.
   age_min: 30                               # per the PREVENT equations
-  age_max: UNRESOLVED                       # Q-S7: PREVENT is validated for 30-79. The advisor said
-                                            # ">= 30". Above 79 we are extrapolating outside the range
-                                            # the model was fitted in. Probably shorthand -- confirm.
+  age_max: 79                               # Q-S7 RESOLVED. PREVENT is validated on 30-79; above 79
+                                            # the model would be extrapolated outside its fitted range.
 
   # COMPLETE-CASE. A participant is eligible ONLY if every PREVENT input is present; incomplete
   # participants are EXCLUDED, not imputed (D-013).
@@ -51,13 +50,16 @@ cohort:
   # Including prevalent cases inflates apparent prediction accuracy (DESIGN §2).
   exclude_prior_ascvd: true
 
-  # Covariates come from BEFORE the event; the cohort is stratified on whether an event occurred
-  # (D-013). That defines a baseline FOR CASES. It defines NOTHING for the people who never have an
-  # event -- and they are most of the cohort. See Q-S6 (🔴, needs the advisor): if cases are anchored
-  # just before their event while non-cases are anchored elsewhere, every risk factor looks more
-  # predictive than it is, AND NO BUG APPEARS ANYWHERE.
-  baseline_for_cases: before_event
-  baseline_for_non_cases: UNRESOLVED        # Q-S6 -- BLOCKS T-002
+  # Event-time anchoring is DEFERRED to a later goal (D-015, Q-S6, T-019). For now: include the
+  # events, and KEEP THE TIMING -- every value and every event carries its own date, so that any
+  # anchoring scheme remains possible later.
+  #
+  # !! NO ANCHOR IS APPLIED YET, AND THAT IS DELIBERATE. The deferral is only safe while it stays
+  # true. If an extractor quietly takes each person's EARLIEST value (the notebook's habit, A-001),
+  # a de-facto anchor creeps in: cases and non-cases end up anchored differently, and every predictor
+  # looks stronger than it is WITH NO BUG APPEARING ANYWHERE. Hence `anchor: none`.
+  anchor: none                              # none | first_complete_panel | landmark   (T-019 decides)
+  retain_all_dates: true                    # non-negotiable while anchor: none
 
   # OPEN — Q-A2. Absence of an EHR code is treated as absence of disease (A-006), and that
   # assumption is weakest for people who barely appear in the EHR.

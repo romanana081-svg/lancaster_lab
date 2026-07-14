@@ -212,7 +212,13 @@ adopt without noticing.
 
 ### A-015 — Restricting to participants with a complete PREVENT panel does not bias the study
 - **Risk:** 🔴
-- **Status:** **UNVERIFIED — and we should expect it to be partly false**
+- **Status:** ✅ **ACCEPTED-AS-LIMITATION 2026-07-14 (D-015).** The assumption is **known to be false**
+  and we are proceeding anyway, deliberately: the complete panel is what lets us use the PREVENT
+  equation *as published*, and that is judged worth the cost. **The concession is conditional on
+  reporting it** — demographics of included vs. excluded get checked, and the result is published with
+  the caveat attached. §C of `sql/02_prevent_panel_completeness.sql` produces that table; T-002 owns it.
+  Everything below stays, because a limitation you have stopped being able to describe is a limitation
+  you will forget to report.
 - **Where it bites:** D-013's eligibility rule. A participant is in the cohort **only if every PREVENT
   input is present** (lipids *and* SBP *and* creatinine *and* smoking *and* diabetes status);
   otherwise they are excluded, not imputed. This sets who the study is *about*.

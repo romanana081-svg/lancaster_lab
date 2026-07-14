@@ -22,6 +22,49 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-14 (evening) — T-017: the feasibility query, and a linkage trap
+
+**Did:** Closed three open items (D-015) and wrote the query the week depends on.
+
+- **Ages 30–79** (Q-S7 resolved). **The complete-panel skew is accepted as a limitation** (A-015) — the
+  concession is deliberate, in order to use the PREVENT equation as published, and it is **conditional
+  on reporting the demographics** of included vs. excluded. **Event-time anchoring is deferred** to a
+  later goal (Q-S6 → T-019): for now we include the events and *keep the timing*.
+- Wrote `sql/01_prevent_concept_discovery.sql` and `sql/02_prevent_panel_completeness.sql`, plus
+  `run_sql.R`, which picks DuckDB or BigQuery off `WORKSPACE_CDR` so **the same SQL runs offline and
+  in the Workbench unchanged**. 71 testthat tests pass.
+
+**Learned — one trap that would have cost real time, and it is not hypothetical:**
+
+**ICD codes are not on the column you would reach for.** In the CDR (verified in the fixture, and true
+upstream), `condition_occurrence.condition_concept_id` maps to **SNOMED**; the ICD10CM code lives on
+`condition_source_concept_id`. Same for procedures — CPT4 is on `procedure_source_concept_id`, while
+the standard column is SNOMED. **Query the obvious column for an ICD code and you get zero rows and no
+error.** Your diabetes phenotype is then simply empty, the completeness count reads 0%, and nothing
+anywhere complains. There is now a test that pins this (`test-prevent-panel-sql.R`), because the whole
+class of bug is invisible by construction.
+
+**Why the discovery query is a separate step, and not fussiness.** Run against the fixture, query 01
+immediately flagged `8480-6` (systolic BP), `2160-0` (creatinine) and both HbA1c codes as **DOES NOT
+RESOLVE** — and query 02 duly reported 0 people with a complete panel. Those two facts have completely
+different meanings: one is *"the fixture lacks these domains"* (true — T-004), the other would be
+*"All of Us participants don't have blood pressures recorded"* (absurd). **From the completeness
+numbers alone you cannot tell "no data" from "wrong code."** That is why 01 runs first, and why a
+failure to resolve is an error rather than a warning.
+
+**A deferral that is only safe while it stays honest.** Q-S6 is postponed, not solved — and the way it
+could quietly un-defer itself is if some extractor "helpfully" reduces each person to their *earliest*
+value, which is the notebook's habit everywhere (A-001). That would install a de-facto anchor, cases
+and non-cases would be anchored differently, and every predictor would look stronger than it is with no
+bug appearing anywhere. Hence `anchor: none` and `retain_all_dates: true` in the config, and a warning
+on T-019. **The dates are the thing keeping the option open.**
+
+**Next:** T-017 needs a Workbench run (H-004) — that is the only thing standing between us and knowing
+whether this design is feasible. Meanwhile T-015 (ASCVD events) and T-004 (seed the fixture with the
+PREVENT domains) are both unblocked.
+
+---
+
 ## 2026-07-14 (advisor meeting) — The project turns: all R, cohort and outcome settled
 
 **Did:** Rewrote the project's spine around the advisor's decisions, and started this week's code.

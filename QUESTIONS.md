@@ -37,7 +37,15 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ### Q-S6 — Cases have a baseline ("before the event"). **What is the baseline for everyone else?**
 - **Priority:** 🔴
-- **Status:** OPEN — **new, and it is the immortal-time trap wearing a different hat**
+- **Status:** ⏸ **DEFERRED to a later goal, 2026-07-14 (D-015) → T-019.** Not resolved — *postponed*,
+  on purpose. This week we simply **include** the events and **preserve the timing**: when each event
+  happened and when each value was obtained are carried as separate explicit columns. That keeps every
+  anchoring option open at zero cost.
+  **The one thing that would make this deferral unsafe:** letting a de-facto anchor creep in by
+  accident. If an extractor quietly takes each person's *earliest* value (the notebook's habit —
+  A-001), cases and non-cases end up anchored differently and every predictor looks stronger than it
+  is, with no bug appearing anywhere. **So: no anchor is applied, and the dates are retained.** The
+  analysis below is what must happen before any survival model is fitted.
 - **Why it matters:** D-013 says covariates are taken from *before the event*, and the cohort is then
   stratified on whether an event occurred. For a person **who has an event**, that is well defined. For
   a person who **never has one, there is no event to be "before"** — so their baseline has to come from
@@ -69,7 +77,9 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ### Q-S7 — Is there an upper age limit?
 - **Priority:** 🟡
-- **Status:** OPEN
+- **Status:** ✅ **RESOLVED 2026-07-14 (D-015): ages 30–79.** The upper bound matters — PREVENT is
+  validated on 30–79, and applying it above 79 would extrapolate the model outside the data it was
+  fitted in. Now enforced in `configs/config.yaml` and in `sql/02_prevent_panel_completeness.sql`.
 - **Why it matters:** the advisor specified **age ≥ 30** ("as described in the PREVENT equations").
   PREVENT is validated for **30–79**. Applying it above 79 means extrapolating a model outside the
   range it was fitted in, where its calibration is unknown.

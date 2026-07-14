@@ -34,7 +34,19 @@ from codes you have not yet resolved; and **T-004 blocks the offline testing hal
 because the fixture currently contains almost none of the PREVENT variables.
 
 ### T-017 — Count the PREVENT panel completeness in the real CDR **first**
-- **Status:** TODO · **Priority:** P0 · **Blocked by:** H-004 (Workbench access) · **Blocks:** T-002
+- **Status:** **QUERY WRITTEN & TESTED — awaiting a Workbench run** · **Priority:** P0
+  · **Blocked by:** H-004 (Workbench access only) · **Blocks:** T-002
+- **Progress 2026-07-14:** `sql/01_prevent_concept_discovery.sql` and
+  `sql/02_prevent_panel_completeness.sql` are written, run against the fixture, and covered by tests.
+  `src/phenotype/R/run_sql.R` runs either file against **DuckDB offline or BigQuery in the Workbench**
+  — it picks the backend from `WORKSPACE_CDR`, so the same SQL runs in both places unchanged.
+  **To run it in All of Us:** open an R notebook, `source("src/phenotype/R/run_sql.R")`, then
+  `run_sql_file("sql/01_prevent_concept_discovery.sql")` — **query 01 first**, then 02.
+- **Fixture result (a fixture fact, NOT a data finding):** 179 eligible srWGS participants aged 30–79;
+  **0 with a complete panel**, because the fixture has no systolic BP and no serum creatinine at all.
+  Query 01 correctly reports those codes as `DOES NOT RESOLVE`. That is exactly the distinction the
+  discovery step exists to make: **"0% coverage" and "your code is wrong" look identical** unless you
+  check the vocabulary first.
 - **Why:** D-013 **excludes** anyone missing any PREVENT input, so **the completeness rate *is* the
   sample size** (A-016). Nobody has counted it. If the complete-panel cohort turns out to be small, the
   study is underpowered before genetics is even added, and the response is a *design change* — a
@@ -125,9 +137,24 @@ because the fixture currently contains almost none of the PREVENT variables.
   D-011). **Borrowed code is not validated code** — whether we install `preventr`, use the advisor's
   code, or transcribe from the supplement, the published-worked-example test is the gate either way.
 
+### T-019 — Event-time anchoring: define the baseline for non-cases — *later goal*
+- **Status:** DEFERRED (by decision — D-015) · **Priority:** P2 · **Blocks:** any survival model
+  (T-007, T-009)
+- **Why:** Q-S6. "Use data from before the event" defines a baseline for cases and for nobody else,
+  and most participants never have an event. Deferred on purpose: this week we include the events and
+  **keep the timing**, which costs nothing and leaves every option open.
+- **Done when:** a single anchoring rule is chosen and applied **symmetrically** to cases and
+  non-cases (candidates: first complete panel; a landmark time; a nested design), and it is applied
+  *before* any survival model is fitted.
+- **⚠️ The one way this deferral goes wrong:** a de-facto anchor creeping in by accident. If any
+  extractor quietly takes each person's *earliest* value (A-001 — the notebook does this everywhere),
+  cases and non-cases end up anchored differently and **every predictor looks stronger than it is,
+  with no bug appearing anywhere.** `configs/config.yaml: anchor: none` and `retain_all_dates: true`
+  are what keep the deferral honest. Do not "helpfully" reduce a person to one value per variable.
+
 ### T-002 — Cohort construction and the attrition flowchart
-- **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** **Q-S6** (baseline for non-cases — 🔴, needs
-  the advisor), Q-S7 (upper age bound), T-014, T-015, T-017 · **Blocks:** T-007, T-009
+- **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** T-014, T-015, T-017 · **Blocks:** T-007,
+  T-009 · *(Q-S6 and Q-S7 no longer block — D-015)*
 - **Why:** Stage 1 of DESIGN §5. Every downstream number is conditioned on who is in the cohort.
 - **Done when:** a reproducible cohort table exists (srWGS, age ≥ 30, complete PREVENT panel, no prior
   ASCVD — D-013), with an attrition flowchart accounting for **every** excluded person, and the counts

@@ -1,0 +1,77 @@
+# prevent_concepts.yaml — the codes behind each PREVENT input. D-004, D-013, T-017.
+#
+# WE MATCH ON CODES, NOT CONCEPT IDs.
+#
+# Concept IDs are unstable across CDR versions and meaningless to read; the vocabulary codes (LOINC,
+# ICD10CM, RxNorm) are stable and self-describing. Matching on codes and resolving to IDs at query
+# time is what makes the definition reviewable -- and it is why `01_prevent_concept_discovery.sql`
+# exists: it CONFIRMS each code resolves before anything depends on it. A code that does not resolve
+# returns zero rows with no error, which is how a phenotype silently empties (D-014).
+#
+# STATUS: the LOINC codes below are the standard ones and three of them are already confirmed present
+# in the fixture (2093-3, 2085-9, 39156-5). ALL OF THEM MUST STILL BE VERIFIED AGAINST THE REAL CDR
+# with the discovery query before the completeness counts are trusted. Do not skip that step.
+
+# IMPORTANT LINKAGE FACT (verified in the fixture 2026-07-14, and true of the real CDR):
+#   ICD10CM codes  -> condition_occurrence.condition_source_concept_id
+#   CPT4  codes    -> procedure_occurrence.procedure_source_concept_id
+#   the *_concept_id (standard) columns map to SNOMED, NOT to ICD/CPT.
+# Querying condition_concept_id for an ICD code returns NOTHING, silently. This is not hypothetical.
+
+measurements:                      # -> measurement, via LOINC
+  total_cholesterol:
+    loinc: ["2093-3"]
+    unit: mg/dL
+    status: VERIFY                 # present in fixture (concept 3008631)
+  hdl_c:
+    loinc: ["2085-9"]
+    unit: mg/dL
+    status: VERIFY                 # present in fixture (concept 3007352)
+  systolic_bp:
+    loinc: ["8480-6"]
+    unit: mmHg
+    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture at all -- T-004
+    note: "All of Us also carries BP in physical measurements; check both sources before concluding
+           a participant has no SBP."
+  serum_creatinine:
+    loinc: ["2160-0"]
+    unit: mg/dL
+    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture -- T-004
+    note: "eGFR is DERIVED from this via CKD-EPI 2021 (race-free). It is not itself a PREVENT input."
+  bmi:
+    loinc: ["39156-5"]
+    unit: kg/m2
+    status: VERIFY                 # present in fixture (concept 3038553)
+  hba1c:
+    loinc: ["4548-4", "17856-6"]
+    unit: "%"
+    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture -- T-004
+    note: "Only needed for EXTENDED PREVENT, and for defining diabetes. Every extra required input
+           SHRINKS the cohort under complete-case (D-013), so this belongs to the model_variant
+           decision (H-002), not to the base panel by default."
+
+conditions:                        # -> condition_occurrence.condition_source_concept_id, via ICD10CM
+  diabetes:
+    icd10_prefix: ["E08", "E09", "E10", "E11", "E13"]
+    status: VERIFY_AND_ADD_TO_FIXTURE
+    note: "Diabetes can be ascertained three ways -- a diagnosis code, HbA1c >= 6.5%, or a glucose-
+           lowering drug -- and they do NOT identify the same people. Which definition we use changes
+           both the cohort and a PREVENT input. Pick one, write it down, and be consistent."
+
+drugs:                             # -> drug_exposure, via RxNorm
+  antihypertensive:
+    rxnorm_ingredients: []         # DELIBERATELY EMPTY -- see note
+    status: NEEDS_A_CODE_LIST
+    note: "Antihypertensive use is a PREVENT input, and there is no single code for it: it is a large
+           class (ACE inhibitors, ARBs, thiazides, CCBs, beta blockers...). Do NOT improvise this list
+           from memory. Pull the ingredient set from the All of Us drug hierarchy (cb_criteria /
+           concept_ancestor) and record what was pulled. A partial list silently misclassifies treated
+           hypertensives as untreated, which biases a PREVENT input directly."
+
+surveys:                           # -> ds_survey / observation
+  current_smoking:
+    status: NEEDS_MAPPING
+    note: "Smoking in All of Us is primarily SURVEY-derived (The Basics / Lifestyle), not EHR-derived.
+           That matters for completeness: a participant with a rich EHR but no completed survey has NO
+           smoking status and is therefore EXCLUDED under complete-case (D-013). This may be the
+           single biggest driver of exclusion, and T-017 is what will tell us."

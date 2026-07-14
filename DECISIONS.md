@@ -329,6 +329,37 @@ question, and the answer must not depend on anyone's memory.
 
 ---
 
+## D-015 — Age 30–79; the complete-panel skew is accepted and reported; event-time anchoring is deferred
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-14 (user, following the advisor meeting)
+- **Context:** three open items from the advisor meeting, closed together.
+- **Decision:**
+  1. **Age 30–79** (resolves **Q-S7**). The upper bound is PREVENT's validated range; above 79 the
+     model would be extrapolated outside the data it was fitted in.
+  2. **The complete-panel selection skew is accepted as a limitation** (resolves **A-015**). We
+     require a complete PREVENT panel *in order to base the model on the equation as published*, and
+     we accept that this yields a healthier, better-monitored cohort. **The concession is conditional
+     on reporting it:** demographics of included vs. excluded are checked and the result is published
+     with that caveat. The caveat is not a sentence in a discussion section — it is a table (T-002,
+     and §C of `sql/02_prevent_panel_completeness.sql`).
+  3. **Event-time anchoring is a later goal, not this week's** (defers **Q-S6**). For now, events are
+     simply *included* in the data, and **the timing is preserved**: when each event happened and when
+     each value was obtained are carried as separate, explicit columns.
+- **Reasoning on (3), because it is the subtle one:** the temptation would be to fold timing away now
+  and reconstruct it later. Carrying the dates forward instead costs nothing today and keeps every
+  anchoring option open — a common baseline, a landmark time, a nested design. **What we must not do
+  is let a de-facto anchor creep in by accident**: if an extraction quietly takes each person's
+  *earliest* value (the notebook's habit — A-001), then cases and non-cases end up anchored
+  differently and every predictor looks stronger than it is, with no bug appearing anywhere. So the
+  deferral is safe **only because timing is retained and no anchor is applied**. That is the whole
+  point of keeping the dates.
+- **Expected impact:** the phenotype table gains a date column beside every value and every event.
+  Q-S6 stays open as a **later goal** (T-019) rather than a blocker; T-002 is unblocked.
+- **Links:** Q-S6 (deferred → T-019), Q-S7 (resolved), A-015 (accepted), A-001, D-013, T-019.
+
+---
+
 ## D-009 — Same-day duplicate measurements are resolved by taking their **mean**
 
 - **Status:** ACCEPTED
