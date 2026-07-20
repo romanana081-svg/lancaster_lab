@@ -142,6 +142,12 @@ so that nothing sits idle waiting for an answer that could have been worked arou
 - **Practical note:** confirm who holds the billing project and what the query budget is *before*
   re-running any "Do once" cell. Those cells cost real BigQuery time and write a new dated export
   directory (CLAUDE.md).
+- **When access arrives, start with the PREVENT feasibility queries (T-017).** `docs/workbench_reconciliation.md`
+  is the procedure: run `01` (does each PREVENT code resolve?) before `02` (the counts), record real-CDR
+  results against the fixture's assumptions, and — because the fixture reproduces the CDR's *structure*,
+  not its *data* — feed anything that differs back into `prevent_concepts.yaml` → the SQL → the fixture.
+  It also says what is safe to bring out of the Workbench (resolution metadata) vs. what needs small-cell
+  suppression first (the counts, per H-006).
 
 ## 🟠 H-005 — Access to the srWGS genomic data, and a decision on the compute environment
 
