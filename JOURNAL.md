@@ -22,6 +22,48 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-20 (later) — taking T-004 to the Workbench: an R entry point, a connection fix, a repo slip
+
+**Did:** Started running the PREVENT reconciliation in All of Us and hit friction that was all
+*environment*, not analysis. Three concrete outcomes.
+
+1. **`run_sql.R`'s BigQuery connection was broken** and would have failed the very first Workbench
+   query. `connect_cdr()` passed the whole `WORKSPACE_CDR` (a `"project.dataset"` string) as bigrquery's
+   `dataset` and never set `billing`, so no table would resolve. Fixed: split on the last dot into
+   data-project + dataset and bill to `GOOGLE_PROJECT`; with the dataset on the connection bigrquery
+   sends it as the job's default dataset, so the bare table names in the `.sql` files resolve — the same
+   mechanism the notebook's `bq_dataset_query()` calls already rely on. Offline path untouched, 73
+   testthat still green. **Still unproven against real BigQuery (H-004)** — but now it matches
+   documented usage instead of being wrong on its face.
+
+2. **Added `src/phenotype/R/reconcile_prevent.R`** — a sourceable R entry point for the whole check.
+   The lesson: the analysis notebook `LDLR Get phenotypes.ipynb` is a **Jupyter** artifact, and the R
+   home in All of Us is **RStudio**, which does not run `.ipynb` cells. The AoU *Jupyter* image we first
+   tried was conda-based with a **read-only system R library and no `DBI`/`tidyverse`/`bigrquery`** —
+   installs fought back. RStudio ships all of it. So the reusable deliverable is a plain `.R` you
+   `source()` from the repo root, not a cell buried in a notebook. It prints the same three layers
+   (resolve? / linkage / completeness) and returns the frames invisibly.
+
+3. **The repo was briefly made public.** A private HTTPS clone via R's `system("git clone …")` *hangs*
+   — git's credential prompt has nowhere to appear, so it looks like "cloning forever" when it is
+   really blocked on auth (the whole `.git` is <1 MB; size was never the issue). Rather than wire up a
+   token, the repo was flipped to public, cloned, and set back to private. **For those minutes the
+   A-014 identifiers — bucket UUID + Megan's institutional email — were public.** No participant data or
+   secrets (T-012). This is the exposure D-010 accepted *only for a private repo*, so H-006's Q-R1 and
+   the courtesy-to-Megan are now live questions for the PI, recorded in `handoff.md`.
+
+**Learned:** the offline fixture did its job twice here — the connection fix and the reconciliation
+script were both dry-run against DuckDB before ever spending a Workbench query, which is exactly the
+point of D-003. The environment surprises (which AoU image, which R library, notebook-vs-script) cost
+more than the code did — worth writing down so the next person picks RStudio and `reconcile_prevent.R`
+straight away.
+
+**Next:** run `reconcile_prevent.R` in the AoU RStudio env against the real CDR; record the resolve
+table + counts in `docs/workbench_reconciliation.md`; feed any divergence back through
+`prevent_concepts.yaml` → the SQL → the fixture. Then T-003 (the extractor) and T-015 (ASCVD events).
+
+---
+
 ## 2026-07-20 — T-004: the fixture finally has the PREVENT panel in it
 
 **Did:** Seeded every PREVENT domain into the fixture, so the thing this week is actually about can be

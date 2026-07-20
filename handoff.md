@@ -56,6 +56,13 @@ so that nothing sits idle waiting for an answer that could have been worked arou
   3. What small-cell suppression threshold applies to any aggregate result we export later?
 - **Proceeding without it:** everything. Nothing is blocked. The repository is treated as **if it were
   about to become public**, which remains the right default.
+- **2026-07-20 — the repo was briefly PUBLIC.** To clone into the All of Us RStudio environment, the
+  repo was made public for a few minutes (a private HTTPS clone via R's `system()` hangs on the
+  credential prompt), then set back to private. For that window the A-014 identifiers — the bucket UUID
+  and Megan's institutional email — were publicly visible. No participant data or secrets were exposed
+  (T-012). This is exactly the exposure D-010 accepted *only for a private repo*, so **Q-R1 (may this
+  repo be public at all?) and the courtesy call to Megan are now live, not hypothetical** — settle them
+  with the PI before the repo is made public again for any length of time.
 - **See:** A-012 (cleared), A-014 (accepted), Q-R1, Q-R3 (resolved), D-010, T-012 (done), T-013 (closed).
 
 ## 🟢 H-003 — Advisor sign-off on the outcome definition and the index date — **RESOLVED 2026-07-14**
