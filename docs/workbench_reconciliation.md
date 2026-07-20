@@ -43,6 +43,11 @@ input whose `01` row is not `ok`.
 
 ## Run order in the Workbench
 
+**The quick path:** the notebook `LDLR Get phenotypes.ipynb` now has a **"PREVENT panel reconciliation
+— run this first"** cell immediately after `# Setup`. Run it and it prints all three checks below
+(resolution table with a `resolves` PASS/FAIL column, the ICD linkage check, and the completeness
+counts) in one go. The manual equivalent, if you want to run the pieces yourself:
+
 ```r
 source("src/phenotype/R/run_sql.R")
 
