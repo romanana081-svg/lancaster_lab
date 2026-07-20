@@ -38,8 +38,12 @@ connect_cdr <- function(fixture_path = "fixture/db/aou_fixture.duckdb") {
                           billing = Sys.getenv("GOOGLE_PROJECT")))
   }
   if (!file.exists(fixture_path)) {
-    stop("connect_cdr(): no fixture at ", fixture_path,
-         "\n  Build it:  python fixture/build/generate.py")
+    stop("connect_cdr(): WORKSPACE_CDR is not set, so I fell back to the OFFLINE fixture — but there\n",
+         "  is no fixture at ", fixture_path, ".\n",
+         "  In the Workbench this usually means your R session did not inherit the All of Us env vars:\n",
+         "    check   Sys.getenv('WORKSPACE_CDR')   and   Sys.getenv('GOOGLE_PROJECT')\n",
+         "    if the RStudio Terminal has them but R does not, set them:  Sys.setenv(WORKSPACE_CDR=..., GOOGLE_PROJECT=...)\n",
+         "  Offline, build the fixture first:  python fixture/build/generate.py")
   }
   message("connect_cdr(): DuckDB fixture — ", fixture_path)
   DBI::dbConnect(duckdb::duckdb(), dbdir = fixture_path, read_only = TRUE)
