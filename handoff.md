@@ -156,9 +156,30 @@ so that nothing sits idle waiting for an answer that could have been worked arou
   It also says what is safe to bring out of the Workbench (resolution metadata) vs. what needs small-cell
   suppression first (the counts, per H-006).
 
-## 🟠 H-005 — Access to the srWGS genomic data, and a decision on the compute environment
+## 🔴 H-005 — Access to the srWGS genomic data, and a decision on the compute environment
 
-- **Needed from:** the lab; All of Us controlled-tier genomic access.
+- **ESCALATED 🟠 → 🔴 on 2026-07-20 by direct evidence.** The reconciliation (`reconcile_prevent.R`)
+  ran against the real CDR (`wb-silky-artichoke-2408.C2025Q4R6`, Controlled Tier v8) and the study
+  cohort came back **empty**: `has_whole_genome_variant = 1` matches **0 of 747,029** participants. It
+  is not a code bug or a v8 rename — the column exists and is populated with 0, and **all four genomic
+  availability flags are 0 for everyone**:
+  `has_whole_genome_variant`, `has_lr_whole_genome_variant`, `has_array_data`,
+  `has_structural_variant_data` → `0 / 0 / 0 / 0`. This workspace's CDR exposes **no genomic layer at
+  all.** So H-005 no longer blocks only T-008 (the variant pipeline) — it blocks the **cohort itself**
+  (D-013: the cohort *is* the srWGS participants), and therefore T-002 and every count downstream.
+- **What to check, with the PI / All of Us support:**
+  1. Is **genomic (srWGS) data access** actually granted for this account, and is the **workspace**
+     provisioned with it? In All of Us, Controlled Tier registration and *genomic* data access are
+     separate steps; the flags read 0 when genomic data is not enabled for the workspace.
+  2. Does v8 still indicate srWGS via `cb_search_person.has_whole_genome_variant`, or has the indicator
+     moved? (The all-zero *including* `has_array_data` points to "no genomic data provisioned" rather
+     than "flag moved," but confirm.)
+  3. Which CDR / workspace configuration the lab intends to use for this study.
+- **What is NOT in doubt:** the rest of the toolchain is validated against real data — all 7 PREVENT
+  codes resolve, the ICD-source linkage is confirmed (113M ICD10CM rows on the source column), and the
+  BigQuery connection works. When a genomic-enabled workspace is available, `reconcile_prevent.R`
+  produces the real feasibility counts unchanged.
+- **Needed from:** the lab; All of Us controlled-tier **genomic** data access.
 - **Why it will block:** T-008 needs the variant data (Hail MatrixTable / VDS, or PLINK/VCF exports).
   Beyond access, there is a resourcing question a human must answer: rare-variant work on ~245,000
   genomes is not laptop-scale, and the choice of tooling (Hail on Spark vs. PLINK/REGENIE vs.

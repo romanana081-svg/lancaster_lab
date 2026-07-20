@@ -22,6 +22,49 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-20 (Workbench run) — the reconciliation ran on real data, and the cohort is empty
+
+**Did:** Ran `reconcile_prevent.R` against the real CDR (`wb-silky-artichoke-2408.C2025Q4R6`,
+Controlled Tier **v8**) in the All of Us RStudio environment. The toolchain worked end to end on the
+first real run — and it immediately earned its keep by surfacing a blocker that would otherwise have
+cost months.
+
+**The result, layer by layer:**
+- **Vocabulary — all 7 PREVENT codes resolve.** Note the real `concept_id`s differ from the fixture
+  (HDL `2085-9` → `3007070` not `3007352`; total cholesterol → `3027114`; one HbA1c → `3005673`).
+  **This is a validation, not a problem:** the queries match on *codes*, and the IDs drifting between
+  the fixture's v7-style seeds and the real v8 CDR is exactly why `prevent_concepts.yaml` insists on
+  matching codes, never IDs. Nothing to fix.
+- **Structure — the linkage trap is real.** ICD10CM sits on `condition_source_concept_id` (**113M**
+  rows) and SNOMED on the standard column (175M), precisely as the fixture predicted. The whole class
+  of silent-empty-phenotype bug is confirmed avoidable.
+- **Coverage — the cohort is empty.** `n_eligible_srwgs_30_79 = 0`. Isolated it to the cohort gate:
+  `dob` is fully populated (747,029 people, 1900–2006), but **`has_whole_genome_variant = 1` matches 0
+  of 747,029.** And it is not a rename — **all four genomic flags are 0 for everyone**
+  (`has_whole_genome_variant`, `has_lr_whole_genome_variant`, `has_array_data`,
+  `has_structural_variant_data`). **This workspace's CDR has no genomic layer at all.**
+
+**Learned — the thing worth the whole exercise:** *"0% coverage" and "wrong code" and "no data
+provisioned" are three different facts that look identical from a single number*, and the layered check
+told them apart. Step 1 proved the codes are right; step 3 gave 0; the follow-up proved the 0 is a
+**data-availability** fact about this workspace, not a bug in our SQL. Learned in an afternoon for the
+price of a few BigQuery scans, not in month three after building an extractor against an empty cohort.
+This escalates **H-005 from 🟠 to 🔴** — it now blocks the cohort itself (D-013), not just the future
+variant pipeline.
+
+**Also confirmed working on real data:** the `run_sql.R` BigQuery fix (the `project.dataset` split +
+billing) connected correctly, and the RStudio env vars had to be `Sys.setenv()`'d into the R session by
+hand (the shell had `WORKSPACE_CDR`/`GOOGLE_PROJECT`, the R session did not inherit them — worth knowing
+for next time).
+
+**Next:** this is a PI / All of Us question (H-005) — verify genomic data access and that the workspace
+is provisioned with srWGS. Nothing in the pipeline needs changing; when a genomic-enabled workspace is
+available, `reconcile_prevent.R` produces the real counts unchanged. Optionally, run the completeness
+query with the srWGS gate removed (on `has_ehr_data = 1`) to confirm the PREVENT *measurement* coverage
+has real data behind it — validating that half of the logic while the genomic access is sorted.
+
+---
+
 ## 2026-07-20 (later) — taking T-004 to the Workbench: an R entry point, a connection fix, a repo slip
 
 **Did:** Started running the PREVENT reconciliation in All of Us and hit friction that was all
