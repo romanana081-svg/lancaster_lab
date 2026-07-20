@@ -276,11 +276,17 @@ def seed_vocabulary():
 # --------------------------------------------------------------------------
 # Row builders
 # --------------------------------------------------------------------------
+CDR_REF_YEAR = 2022  # the fixture's stand-in CDR cutoff year; age_at_cdr is measured against it
+
+
 def add_person(pid, dob="1960-06-15", race=8527, sex=8507, wgs=1, ehr=1):
+    # age_at_cdr mirrors the real CDR column: the participant's age at the CDR cutoff, derived per
+    # person from dob (NOT a constant), so sql/02's age_at_cdr 30-79 gate is exercised offline.
+    age_at_cdr = CDR_REF_YEAR - int(dob[:4])
     person.append((pid, sex, int(dob[:4]), 6, 15, f"{dob} 00:00:00", race, 0, None, None, None,
                    f"P{pid}", None, 0, RACES.get(race), race, None, 0, sex, sex, None))
     cb_person.append((pid, RACES.get(race), SEXES.get(sex), RACES.get(race), "Not Hispanic or Latino",
-                      dob, 45, 62, ehr, 1, 1, 0, wgs, 1, 0, 0, "OH"))
+                      dob, max(age_at_cdr - 3, 0), age_at_cdr, ehr, 1, 1, 0, wgs, 1, 0, 0, "OH"))
 
 
 def add_visit(pid, d, vc=VISIT_OP):
@@ -712,18 +718,21 @@ def build_prevent_scenarios():
            has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
            has_bmi=1, has_diabetes_dx=0, complete_prevent_panel="age-excluded")
 
-    # P34 complete panel but NOT in the srWGS cohort (has_whole_genome_variant=0). Like
-    # P20, it must be ABSENT everywhere -- from the LDLR pheno_df AND from the PREVENT
-    # eligible cohort. Adversarial check that the cohort gate actually filters.
+    # P34 complete panel, has_whole_genome_variant=0. This is the participant that DISTINGUISHES the
+    # two cohorts: it is ABSENT from the srWGS-gated LDLR export/pheno_df (like P20, so verify.py must
+    # still not see it), but PRESENT and complete in the genomic-free PREVENT cohort (sql/02 gates on
+    # has_ehr_data, not srWGS). age_at_cdr = 2022-1968 = 54, in range.
     add_person(1000034, dob="1968-06-15", wgs=0); add_visits(1000034, STD_VISITS)
     add_meas(1000034, PD, CHOL_EXCLUDED, 185.0)
     add_meas(1000034, PD, STRAY, 58.0)
     add_meas(1000034, PD, SBP, 122.0, unit="mmHg", unit_cid=UNIT_MMHG)
     add_meas(1000034, PD, CREAT, 0.8)
     add_meas(1000034, PD, BMI_C, 25.4, unit="kg/m2", unit_cid=UNIT_KGM2)
-    expect(1000034, "complete panel but has_whole_genome_variant=0 -- MUST BE ABSENT",
+    expect(1000034, "complete panel, wgs=0 -- ABSENT from LDLR, but PRESENT+complete in PREVENT cohort",
            CAD_code="absent", LDL="absent", any_chol_med="absent", censor_type="absent",
-           CAD_censored_date="absent", complete_prevent_panel="cohort-excluded")
+           CAD_censored_date="absent",
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=1)
 
 
 # --------------------------------------------------------------------------

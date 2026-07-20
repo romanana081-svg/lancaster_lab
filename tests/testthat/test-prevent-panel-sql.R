@@ -45,15 +45,15 @@ test_that("the panel-completeness query runs and applies the 30-79 age gate (Q-S
     d <- run_sql_file(file.path(SQL_DIR, "02_prevent_panel_completeness.sql"), con)
 
     expect_equal(nrow(d), 1)
-    expect_true(d$n_eligible_srwgs_30_79 > 0)
+    expect_true(d$n_eligible_30_79 > 0)
 
-    # The cohort gate must actually filter. The fixture has 308 people, 198 with srWGS; the eligible
-    # count must be strictly smaller than the srWGS count, or the age filter is doing nothing. In
-    # particular participant 1000033 is srWGS with a complete panel but is age 84, so the 30-79 gate
-    # is what keeps it out.
-    n_wgs <- DBI::dbGetQuery(con,
-      "SELECT COUNT(*) n FROM cb_search_person WHERE has_whole_genome_variant = 1")$n
-    expect_true(d$n_eligible_srwgs_30_79 < n_wgs)
+    # The age gate (age_at_cdr BETWEEN 30 AND 79) must actually filter: the eligible count must be
+    # strictly smaller than the has-EHR population, or the gate is doing nothing. Participant 1000033
+    # has EHR and a complete panel but age_at_cdr 84, so the 30-79 gate is what keeps it out (and the
+    # complete-panel count below would be 5 instead of 4 if it did not).
+    n_ehr <- DBI::dbGetQuery(con,
+      "SELECT COUNT(*) n FROM cb_search_person WHERE has_ehr_data = 1")$n
+    expect_true(d$n_eligible_30_79 < n_ehr)
   })
 })
 
@@ -68,17 +68,21 @@ test_that("with the PREVENT domains seeded (T-004), the query counts a complete 
     #
     # The counts are DETERMINISTIC, not random: only the hand-authored PREVENT scenario participants
     # (1000028-1000034) carry SBP or creatinine, so nothing in the randomised filler can perturb
-    # these. Complete panels: 1000028 (clean), 1000030 (dirty SBP but a valid reading survives),
-    # 1000032 (HbA1c, no dx). 1000029 (no creatinine) and 1000031 (creatinine NULL-value only) are
-    # incomplete by design; 1000033 (age 84) and 1000034 (not srWGS) are gated out entirely.
-    expect_equal(d$n_systolic_bp, 5)         # 1000028,29,30,31,32
-    expect_equal(d$n_serum_creatinine, 3)    # 1000028,30,32  (31's creatinine is NULL-valued)
-    expect_equal(d$n_complete_panel_PARTIAL, 3)
+    # these. The cohort is now genomic-free (has_ehr_data, not srWGS), so 1000034 (wgs=0 but EHR +
+    # complete) counts. Complete panels: 1000028, 1000030, 1000032, 1000034. 1000029 (no creatinine)
+    # and 1000031 (creatinine NULL-value only) are incomplete; 1000033 (age_at_cdr 84) is age-gated.
+    expect_equal(d$n_systolic_bp, 6)         # 1000028,29,30,31,32,34
+    expect_equal(d$n_serum_creatinine, 4)    # 1000028,30,32,34  (31's creatinine is NULL-valued)
+    expect_equal(d$n_complete_panel_PARTIAL, 4)
 
     # The NULL-value guard is load-bearing: 1000031 has a creatinine ROW but no numeric value, and
-    # it must not be counted (cf. defect A2). If this rises to 4, the `value_as_number IS NOT NULL`
+    # it must not be counted (cf. defect A2). If this rises to 5, the `value_as_number IS NOT NULL`
     # filter has been dropped.
-    expect_true(d$n_serum_creatinine < 4)
+    expect_true(d$n_serum_creatinine < 5)
+
+    # The age gate is pinned here too: 1000033 has a complete panel but age_at_cdr 84, so the count
+    # is 4 not 5. If it reads 5, the 30-79 gate stopped working.
+    expect_equal(d$n_complete_panel_PARTIAL, 4)
 
     # Diabetes-by-code counts only 1000028 (E11.9). 1000032's diabetic-range HbA1c is deliberately
     # NOT a diagnosis code -- the two definitions diverge (prevent_concepts.yaml).

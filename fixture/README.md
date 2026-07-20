@@ -121,8 +121,8 @@ complete PREVENT panel offline (D-013, T-017). They are validated by
 | `1000030` | complete, but SBP dirty (out-of-range 900 / wrong-unit / same-day dup) | ✅ included |
 | `1000031` | creatinine present but only as a censored NULL-value row | ❌ excluded (must not count) |
 | `1000032` | complete; HbA1c 7.2% but **no** diabetes code (definitions diverge) | ✅ included |
-| `1000033` | complete but age 84 — outside the 30–79 gate (Q-S7) | ⛔ age-gated out |
-| `1000034` | complete but `has_whole_genome_variant = 0` | ⛔ cohort-gated out (absent) |
+| `1000033` | complete but age 84 (`age_at_cdr`) — outside the 30–79 gate (Q-S7) | ⛔ age-gated out |
+| `1000034` | complete, `has_whole_genome_variant = 0` — absent from the srWGS-gated LDLR pipeline, but present + complete in the genomic-free PREVENT cohort | ✅ in PREVENT |
 
 **One interaction to know:** the LDLR pipeline is untouched and still defines LDL *negatively*, so
 each PREVENT participant's HDL row (LOINC `2085-9`, mg/dL) is misread as their LDL — the pre-existing

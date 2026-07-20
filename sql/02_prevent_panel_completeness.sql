@@ -1,12 +1,15 @@
--- 02_prevent_panel_completeness.sql — T-017. D-013, A-015, A-016.
+-- 02_prevent_panel_completeness.sql — T-017 / T-003. D-013, A-015, A-016.
 --
 -- THE QUESTION THIS ANSWERS, AND WHY IT COMES BEFORE EVERYTHING ELSE:
 --
--- D-013 excludes anyone missing ANY PREVENT input. So the completeness rate IS the sample size. If
--- only a small fraction of srWGS participants aged 30-79 have the full panel, the study may be
--- underpowered before genetics is even added -- and the response is a DESIGN CHANGE (relaxed panel,
--- imputation, broader outcome), not a shrug. It is far cheaper to learn that from one query now than
--- from a null result in month three.
+-- D-013 excludes anyone missing ANY PREVENT input, so the completeness rate IS the number of people
+-- you can actually run PREVENT on. If only a small fraction aged 30-79 have the full panel, the study
+-- may be underpowered -- and the response is a DESIGN CHANGE (relaxed panel, imputation, broader
+-- outcome), not a shrug. Far cheaper to learn that from one query now than from a null result later.
+--
+-- SCOPE (2026-07-20): this is the GENOMIC-FREE cohort -- has EHR data, aged 30-79, no srWGS gate.
+-- PREVENT is genomic-independent and this week is the PREVENT ETL; the srWGS restriction (D-013)
+-- gets added for the genetic study next week (see the cohort CTE).
 --
 -- It also produces the DEMOGRAPHIC BREAKDOWN needed for the caveat we have agreed to report: the
 -- complete-panel requirement selects for sustained healthcare contact, so the included differ
@@ -16,33 +19,37 @@
 -- Run 01_prevent_concept_discovery.sql FIRST. If a code does not resolve there, its coverage here
 -- reads as 0% and you cannot tell "no data" from "wrong code".
 --
--- Portable across DuckDB (fixture) and BigQuery (Workbench).
---   BigQuery : prefix tables with the CDR dataset, e.g. `{WORKSPACE_CDR}.measurement`.
---   Age      : computed from `dob` by year arithmetic rather than a date-diff function, because
---              DuckDB and BigQuery spell DATE_DIFF differently. It is approximate to +/- 1 year,
---              which is fine for a feasibility count and NOT fine for the analysis itself.
+-- Portable across DuckDB (fixture) and BigQuery (Workbench). Age comes from
+-- cb_search_person.age_at_cdr (the CDR's own computed age), so there is no hardcoded reference date.
 --
--- EXPECTED OFFLINE RESULT: systolic_bp, serum_creatinine, hba1c, diabetes, smoking and
--- antihypertensive coverage will all be ~0 on the fixture, because THE FIXTURE DOES NOT CONTAIN
--- THOSE DOMAINS YET (T-004). That is a fixture gap, not a data finding. Do not read the offline
--- numbers as if they were the CDR's.
+-- OFFLINE the fixture now carries all the PREVENT domains (T-004), so the counts are non-zero and
+-- deterministic (see tests/testthat/test-prevent-panel-sql.R). They are FIXTURE facts, not data
+-- findings -- do not read the offline numbers as if they were the real CDR's.
 
 WITH
 -- ---------------------------------------------------------------------------------------------
--- The eligible cohort: srWGS, aged 30-79 (D-013; upper bound = PREVENT's validated range, Q-S7).
+-- The eligible cohort: has EHR data, aged 30-79 (upper bound = PREVENT's validated range, Q-S7).
+--
+-- NO srWGS GATE. PREVENT is computed from EHR measurements and is genomic-independent; this week is
+-- the PREVENT ETL, and genetics starts next week. When the genetic study cohort is built (D-013),
+-- add  `AND has_whole_genome_variant = 1`  below to restrict to short-read WGS participants. (In
+-- CDR v8 that flag is 0 for everyone in a workspace with no genomic data provisioned -- H-005.)
+--
+-- Age comes from cb_search_person.age_at_cdr (the CDR's own computed age at cutoff), not from
+-- year-of-birth arithmetic -- exact, and free of any hardcoded reference date.
 -- ---------------------------------------------------------------------------------------------
 cohort AS (
   SELECT
     person_id,
     sex_at_birth,
     race,
-    (EXTRACT(YEAR FROM DATE '2022-07-01') - EXTRACT(YEAR FROM dob)) AS age_approx
+    age_at_cdr AS age
   FROM cb_search_person
-  WHERE has_whole_genome_variant = 1
+  WHERE has_ehr_data = 1
 ),
 eligible AS (
   SELECT * FROM cohort
-  WHERE age_approx BETWEEN 30 AND 79
+  WHERE age BETWEEN 30 AND 79
 ),
 
 -- ---------------------------------------------------------------------------------------------
@@ -90,7 +97,7 @@ flags AS (
     e.person_id,
     e.sex_at_birth,
     e.race,
-    e.age_approx,
+    e.age,
     CASE WHEN t.person_id  IS NOT NULL THEN 1 ELSE 0 END AS has_total_cholesterol,
     CASE WHEN h.person_id  IS NOT NULL THEN 1 ELSE 0 END AS has_hdl_c,
     CASE WHEN s.person_id  IS NOT NULL THEN 1 ELSE 0 END AS has_systolic_bp,
@@ -127,7 +134,7 @@ panel AS (
 -- A. Coverage of each input, one row. THE HEADLINE.
 -- ---------------------------------------------------------------------------------------------
 SELECT
-  COUNT(*)                                          AS n_eligible_srwgs_30_79,
+  COUNT(*)                                          AS n_eligible_30_79,
   SUM(has_total_cholesterol)                        AS n_total_cholesterol,
   SUM(has_hdl_c)                                    AS n_hdl_c,
   SUM(has_systolic_bp)                              AS n_systolic_bp,
@@ -180,6 +187,6 @@ FROM panel;
 -- ---------------------------------------------------------------------------------------------
 -- D. Age distribution of the eligible cohort, as a sanity check on the 30-79 filter (Q-S7).
 -- ---------------------------------------------------------------------------------------------
--- SELECT MIN(age_approx) AS min_age, MAX(age_approx) AS max_age,
+-- SELECT MIN(age) AS min_age, MAX(age) AS max_age,
 --        COUNT(*) AS n, SUM(complete_panel_partial) AS n_complete
 -- FROM panel;

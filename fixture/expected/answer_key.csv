@@ -32,4 +32,4 @@ person_id,scenario,CAD_code,CAD_code_date,LDL,Date_LDL_assessment,BMI,any_chol_m
 1000031,creatinine only as a censored NULL-value row -- EXCLUDED (must not count),0,,55,2019-03-03,24.1,0,,NA,,,,,,,,1,2021-11-20,1,1,1,0,1,0,,,,0,creatinine row exists but value_as_number is NULL
 1000032,complete panel; HbA1c 7.2% but no diabetes code (definitions diverge),0,,45,2019-03-03,33.3,0,,NA,,,,,,,,1,2021-11-20,1,1,1,1,1,0,1,1,1,1,
 1000033,complete panel but age 84 -- EXCLUDED by the 30-79 gate (Q-S7),0,,50,2019-03-03,28.6,0,,NA,,,,,,,,1,2021-11-20,1,1,1,1,1,0,,,,age-excluded,
-1000034,complete panel but has_whole_genome_variant=0 -- MUST BE ABSENT,absent,,absent,,,absent,,,,,,,,,,absent,absent,,,,,,,,,,cohort-excluded,
+1000034,"complete panel, wgs=0 -- ABSENT from LDLR, but PRESENT+complete in PREVENT cohort",absent,,absent,,,absent,,,,,,,,,,absent,absent,1,1,1,1,1,0,,,,1,
