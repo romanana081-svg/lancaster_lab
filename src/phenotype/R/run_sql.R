@@ -19,10 +19,23 @@ connect_cdr <- function(fixture_path = "fixture/db/aou_fixture.duckdb") {
     if (!requireNamespace("bigrquery", quietly = TRUE)) {
       stop("WORKSPACE_CDR is set (we appear to be in the Workbench) but bigrquery is not installed.")
     }
-    message("connect_cdr(): BigQuery — ", cdr)
+    # WORKSPACE_CDR is a fully-qualified "data-project.dataset" (e.g.
+    # "fc-aou-cdr-prod-ct.C2022Q4R9"). bigrquery wants those split: `project` is the
+    # project that HOLDS the CDR, `dataset` the dataset within it, and `billing` the
+    # user's own GOOGLE_PROJECT (queries cannot be billed to the CDR project). With a
+    # dataset set on the connection, bigrquery sends it as the job's DEFAULT dataset,
+    # so the bare table names in the .sql files (concept, measurement, ...) resolve —
+    # the same mechanism the notebook's bq_dataset_query() calls already rely on.
+    dot <- regexpr("\\.[^.]*$", cdr)  # position of the last dot
+    if (dot < 1) stop("connect_cdr(): WORKSPACE_CDR is not 'project.dataset': ", cdr)
+    data_project <- substr(cdr, 1, dot - 1)
+    dataset      <- substr(cdr, dot + 1, nchar(cdr))
+    message("connect_cdr(): BigQuery — project=", data_project, " dataset=", dataset,
+            " billing=", Sys.getenv("GOOGLE_PROJECT"))
     return(DBI::dbConnect(bigrquery::bigquery(),
-                          project = Sys.getenv("GOOGLE_PROJECT"),
-                          dataset = cdr))
+                          project = data_project,
+                          dataset = dataset,
+                          billing = Sys.getenv("GOOGLE_PROJECT")))
   }
   if (!file.exists(fixture_path)) {
     stop("connect_cdr(): no fixture at ", fixture_path,
