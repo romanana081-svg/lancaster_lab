@@ -26,72 +26,75 @@ person_id,date_of_birth,race,sex_at_birth
 1000026,1960-06-15 00:00:00,White,Male
 1000026,1960-06-15 00:00:00,Asian,Male
 1000027,1960-06-15 00:00:00,White,Male
-1000028,1950-06-15 00:00:00,Middle Eastern or North African,Female
-1000029,1973-06-15 00:00:00,Black or African American,Male
-1000031,1953-06-15 00:00:00,Asian,Male
-1000032,1974-06-15 00:00:00,Middle Eastern or North African,Female
-1000033,1982-06-15 00:00:00,White,Male
-1000034,1958-06-15 00:00:00,White,Female
-1000035,1967-06-15 00:00:00,Black or African American,Female
-1000039,1968-06-15 00:00:00,White,Male
-1000040,1967-06-15 00:00:00,White,Female
-1000041,1969-06-15 00:00:00,White,Female
-1000043,1958-06-15 00:00:00,I prefer not to answer,Male
-1000044,1940-06-15 00:00:00,White,Male
-1000045,1940-06-15 00:00:00,I prefer not to answer,Female
-1000046,1948-06-15 00:00:00,White,Female
-1000049,1956-06-15 00:00:00,White,Male
-1000052,1952-06-15 00:00:00,Middle Eastern or North African,Female
-1000054,1963-06-15 00:00:00,PMI: Skip,Female
-1000057,1983-06-15 00:00:00,PMI: Skip,Male
-1000058,1960-06-15 00:00:00,White,Female
-1000059,1962-06-15 00:00:00,White,Male
-1000060,1954-06-15 00:00:00,Black or African American,Female
-1000063,1983-06-15 00:00:00,Black or African American,Female
-1000064,1977-06-15 00:00:00,White,Female
-1000065,1979-06-15 00:00:00,None Indicated,Male
-1000066,1970-06-15 00:00:00,Asian,Male
-1000070,1960-06-15 00:00:00,Black or African American,Male
-1000071,1956-06-15 00:00:00,Asian,Male
-1000072,1953-06-15 00:00:00,White,Male
-1000073,1942-06-15 00:00:00,Black or African American,Female
-1000077,1960-06-15 00:00:00,White,Female
-1000078,1943-06-15 00:00:00,White,Male
-1000079,1979-06-15 00:00:00,None Indicated,Male
-1000080,1946-06-15 00:00:00,White,Female
-1000081,1964-06-15 00:00:00,White,Female
-1000084,1979-06-15 00:00:00,Middle Eastern or North African,Male
-1000085,1983-06-15 00:00:00,White,Female
-1000087,1952-06-15 00:00:00,Asian,Male
-1000091,1964-06-15 00:00:00,White,Female
-1000092,1958-06-15 00:00:00,Black or African American,Male
-1000093,1978-06-15 00:00:00,Asian,Male
-1000094,1978-06-15 00:00:00,Black or African American,Female
-1000097,1982-06-15 00:00:00,White,Female
-1000098,1978-06-15 00:00:00,Black or African American,Male
-1000099,1945-06-15 00:00:00,White,Male
-1000100,1972-06-15 00:00:00,White,Female
-1000103,1961-06-15 00:00:00,White,Male
-1000104,1956-06-15 00:00:00,Asian,Male
-1000105,1983-06-15 00:00:00,PMI: Skip,Female
-1000106,1953-06-15 00:00:00,Black or African American,Female
-1000109,1960-06-15 00:00:00,White,Male
-1000110,1948-06-15 00:00:00,None Indicated,Female
-1000111,1960-06-15 00:00:00,None Indicated,Male
-1000112,1958-06-15 00:00:00,White,Female
-1000113,1952-06-15 00:00:00,White,Male
-1000114,1959-06-15 00:00:00,Black or African American,Male
-1000115,1969-06-15 00:00:00,White,Male
-1000119,1960-06-15 00:00:00,Black or African American,Male
-1000120,1980-06-15 00:00:00,White,Male
-1000121,1967-06-15 00:00:00,Black or African American,Male
-1000122,1952-06-15 00:00:00,PMI: Skip,Female
-1000123,1949-06-15 00:00:00,Asian,Male
-1000124,1945-06-15 00:00:00,PMI: Skip,Female
-1000127,1941-06-15 00:00:00,PMI: Skip,Female
-1000131,1973-06-15 00:00:00,White,Male
-1000132,1957-06-15 00:00:00,White,Female
-1000133,1973-06-15 00:00:00,White,Female
-1000135,1977-06-15 00:00:00,Middle Eastern or North African,Male
-1000136,1972-06-15 00:00:00,White,Male
-1000137,1979-06-15 00:00:00,White,Female
+1000028,1965-06-15 00:00:00,White,Male
+1000029,1970-06-15 00:00:00,White,Male
+1000030,1958-06-15 00:00:00,White,Male
+1000031,1972-06-15 00:00:00,White,Male
+1000032,1961-06-15 00:00:00,White,Male
+1000033,1938-06-15 00:00:00,White,Male
+1000035,1950-06-15 00:00:00,Middle Eastern or North African,Female
+1000036,1973-06-15 00:00:00,Black or African American,Male
+1000038,1953-06-15 00:00:00,Asian,Male
+1000039,1974-06-15 00:00:00,Middle Eastern or North African,Female
+1000040,1982-06-15 00:00:00,White,Male
+1000041,1958-06-15 00:00:00,White,Female
+1000042,1967-06-15 00:00:00,Black or African American,Female
+1000046,1968-06-15 00:00:00,White,Male
+1000047,1967-06-15 00:00:00,White,Female
+1000048,1969-06-15 00:00:00,White,Female
+1000050,1958-06-15 00:00:00,I prefer not to answer,Male
+1000051,1940-06-15 00:00:00,White,Male
+1000052,1940-06-15 00:00:00,I prefer not to answer,Female
+1000053,1948-06-15 00:00:00,White,Female
+1000056,1956-06-15 00:00:00,White,Male
+1000059,1952-06-15 00:00:00,Middle Eastern or North African,Female
+1000061,1963-06-15 00:00:00,PMI: Skip,Female
+1000064,1983-06-15 00:00:00,PMI: Skip,Male
+1000065,1960-06-15 00:00:00,White,Female
+1000066,1962-06-15 00:00:00,White,Male
+1000067,1954-06-15 00:00:00,Black or African American,Female
+1000070,1983-06-15 00:00:00,Black or African American,Female
+1000071,1977-06-15 00:00:00,White,Female
+1000072,1979-06-15 00:00:00,None Indicated,Male
+1000073,1970-06-15 00:00:00,Asian,Male
+1000077,1960-06-15 00:00:00,Black or African American,Male
+1000078,1956-06-15 00:00:00,Asian,Male
+1000079,1953-06-15 00:00:00,White,Male
+1000080,1942-06-15 00:00:00,Black or African American,Female
+1000084,1960-06-15 00:00:00,White,Female
+1000085,1943-06-15 00:00:00,White,Male
+1000086,1979-06-15 00:00:00,None Indicated,Male
+1000087,1946-06-15 00:00:00,White,Female
+1000088,1964-06-15 00:00:00,White,Female
+1000091,1979-06-15 00:00:00,Middle Eastern or North African,Male
+1000092,1983-06-15 00:00:00,White,Female
+1000094,1952-06-15 00:00:00,Asian,Male
+1000098,1964-06-15 00:00:00,White,Female
+1000099,1958-06-15 00:00:00,Black or African American,Male
+1000100,1978-06-15 00:00:00,Asian,Male
+1000101,1978-06-15 00:00:00,Black or African American,Female
+1000104,1982-06-15 00:00:00,White,Female
+1000105,1978-06-15 00:00:00,Black or African American,Male
+1000106,1945-06-15 00:00:00,White,Male
+1000107,1972-06-15 00:00:00,White,Female
+1000110,1961-06-15 00:00:00,White,Male
+1000111,1956-06-15 00:00:00,Asian,Male
+1000112,1983-06-15 00:00:00,PMI: Skip,Female
+1000113,1953-06-15 00:00:00,Black or African American,Female
+1000116,1960-06-15 00:00:00,White,Male
+1000117,1948-06-15 00:00:00,None Indicated,Female
+1000118,1960-06-15 00:00:00,None Indicated,Male
+1000119,1958-06-15 00:00:00,White,Female
+1000120,1952-06-15 00:00:00,White,Male
+1000121,1959-06-15 00:00:00,Black or African American,Male
+1000122,1969-06-15 00:00:00,White,Male
+1000126,1960-06-15 00:00:00,Black or African American,Male
+1000127,1980-06-15 00:00:00,White,Male
+1000128,1967-06-15 00:00:00,Black or African American,Male
+1000129,1952-06-15 00:00:00,PMI: Skip,Female
+1000130,1949-06-15 00:00:00,Asian,Male
+1000131,1945-06-15 00:00:00,PMI: Skip,Female
+1000134,1941-06-15 00:00:00,PMI: Skip,Female
+1000138,1973-06-15 00:00:00,White,Male
+1000139,1957-06-15 00:00:00,White,Female
+1000140,1973-06-15 00:00:00,White,Female

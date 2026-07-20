@@ -65,6 +65,41 @@ VISIT_IP, VISIT_OP, VISIT_ER, VISIT_OFFICE = 9201, 9202, 9203, 581477
 TYPE_EHR, TYPE_SURVEY = 32817, 45905771
 OP_LT = 4171756
 
+# --------------------------------------------------------------------------
+# PREVENT panel domains (T-004). Codes come from configs/prevent_concepts.yaml.
+# Three PREVENT measurement inputs already exist above and resolve today:
+# total cholesterol (2093-3 = CHOL_EXCLUDED), HDL-C (2085-9 = STRAY), BMI (39156-5 =
+# BMI_C). These are the ones T-004 adds.
+#
+# CRUCIAL: the four measurement concepts below are seeded as STANDALONE cb_criteria
+# nodes (parent_path=None), exactly like BMI -- NOT under the lipid group. The
+# notebook's labs export walks only the lipid-group hierarchy (37026687 / 3022192), so
+# these never enter its negatively-defined LDL frame and cannot pollute the LDLR
+# pipeline. (HDL and TC still do, via the pre-existing A9 path -- that is why the
+# PREVENT participants' LDL column below is their HDL value.)
+SBP    = 3004249   # LOINC 8480-6  systolic blood pressure                 (unit mmHg)
+CREAT  = 3016723   # LOINC 2160-0  creatinine [Mass/volume] in serum       (unit mg/dL)
+HBA1C1 = 3004410   # LOINC 4548-4  hemoglobin A1c                          (unit %)
+HBA1C2 = 3007263   # LOINC 17856-6 hemoglobin A1c by IFCC protocol         (unit %)
+
+UNIT_MMHG, UNIT_PERCENT = 8876, 8554
+
+# Diabetes by DIAGNOSIS code. ICD10CM lives on condition_source_concept_id (the linkage
+# trap, sec.C of 01_prevent_concept_discovery.sql); SNOMED sits on condition_concept_id.
+DM_ICD_T2, DM_ICD_T1 = 45591001, 45591002   # source concepts, is_standard = 0
+DM_STD = 201826                              # SNOMED "Type 2 diabetes mellitus"
+
+# Antihypertensive ingredients. ILLUSTRATIVE fixture data only: the authoritative
+# ingredient list is DELIBERATELY not hardcoded (prevent_concepts.yaml: NEEDS_A_CODE_LIST,
+# "do NOT improvise this list from memory"). This is just enough for a future extractor
+# to find rows -- it is not a clinical definition and must not be treated as one.
+ANTIHTN = [1308216, 974166]   # lisinopril, hydrochlorothiazide (RxNorm ingredients)
+
+# Current smoking is SURVEY-derived in All of Us (prevent_concepts.yaml: NEEDS_MAPPING).
+# Seeded in ds_survey under its own question_concept_id so it does NOT leak into the
+# cholesterol-med survey export (that query filters question_concept_id = 43528793).
+SMOKING_Q = 1585857
+
 RACES = {
     8527: "White",
     8516: "Black or African American",
@@ -198,6 +233,45 @@ def seed_vocabulary():
             add_concept(cid, nm, "Gender", "Gender", "Gender", "S", str(cid))
     add_concept(43528793, SURVEY_TEXT, "Observation", "PPI", "Question", "S", "cholesterol_med")
 
+    # --- PREVENT panel domains (T-004) ------------------------------------
+    # Standalone measurement concepts (parent_path=None), like BMI: seeded so the
+    # discovery query resolves them and the completeness query counts them, but kept
+    # OUT of the lipid-group hierarchy so the notebook's LDL export never sees them.
+    for cid, code, nm in [
+        (SBP,    "8480-6",  "Systolic blood pressure"),
+        (CREAT,  "2160-0",  "Creatinine [Mass/volume] in Serum or Plasma"),
+        (HBA1C1, "4548-4",  "Hemoglobin A1c/Hemoglobin.total in Blood"),
+        (HBA1C2, "17856-6", "Hemoglobin A1c/Hemoglobin.total in Blood by IFCC protocol"),
+    ]:
+        add_concept(cid, nm, "Measurement", "LOINC", "Lab Test", "S", code)
+        add_criteria(cid, nm, "MEASUREMENT", "LOINC", 1)
+
+    # Diabetes: ICD10CM on the SOURCE concept, one SNOMED standard concept.
+    add_concept(DM_STD, "Type 2 diabetes mellitus", "Condition", "SNOMED", "Clinical Finding", "S", "44054006")
+    for cid, code, nm in [
+        (DM_ICD_T2, "E11.9", "Type 2 diabetes mellitus without complications"),
+        (DM_ICD_T1, "E10.9", "Type 1 diabetes mellitus without complications"),
+    ]:
+        add_concept(cid, nm, "Condition", "ICD10CM", "4-char billing code", None, code)
+        add_criteria(cid, nm, "CONDITION", "ICD10CM", 0)
+
+    # Antihypertensives (ILLUSTRATIVE -- see constants). Mirrors the statin pattern:
+    # ingredient -> cb_criteria(is_standard=1) -> cb_criteria_ancestor -> clinical drug.
+    for c in ANTIHTN:
+        add_concept(c, f"Antihypertensive ingredient {c}", "Drug", "RxNorm", "Ingredient", "S", str(c))
+        add_criteria(c, f"Antihypertensive ingredient {c}", "DRUG", "RXNORM", 1)
+        clinical = 40000000 + c % 1000000
+        add_concept(clinical, f"Clinical drug for ingredient {c}", "Drug", "RxNorm", "Clinical Drug", "S", str(clinical))
+        cb_anc.append((c, c))
+        cb_anc.append((c, clinical))
+
+    # Smoking survey question.
+    add_concept(SMOKING_Q, "Smoking status", "Observation", "PPI", "Question", "S", "smoking_status")
+
+    # Supporting units for the new measurements.
+    add_concept(UNIT_MMHG, "millimeter mercury column", "Unit", "UCUM", "Unit", "S", "mmHg")
+    add_concept(UNIT_PERCENT, "percent", "Unit", "UCUM", "Unit", "S", "%")
+
 
 # --------------------------------------------------------------------------
 # Row builders
@@ -247,6 +321,14 @@ def add_drug(pid, d, cid):
 def add_survey(pid, d, yes):
     survey.append((pid, f"{d} 00:00:00", "Personal Medical History", SURVEY_Q, SURVEY_TEXT,
                    1 if yes else 0, SURVEY_YES if yes else SURVEY_NO, 2100000000, "version 1"))
+
+
+def add_smoking(pid, d, status):
+    """A smoking-status survey answer. Its question_concept_id (SMOKING_Q) differs from
+    the cholesterol-med question, so it is invisible to the notebook's survey export and
+    only a PREVENT extractor (T-003) will read it."""
+    survey.append((pid, f"{d} 00:00:00", "Lifestyle", SMOKING_Q, "Smoking status",
+                   0, status, 2100000000, "version 1"))
 
 
 def expect(pid, scenario, **kw):
@@ -506,9 +588,148 @@ def build_scenarios():
 
 
 # --------------------------------------------------------------------------
+# The PREVENT panel scenario participants (T-004).
+#
+# These exercise the domains the LDLR notebook never touched -- systolic BP, serum
+# creatinine, HbA1c/diabetes, smoking and antihypertensive use -- and they are what
+# lets 02_prevent_panel_completeness.sql finally count a complete panel offline.
+#
+# Read-me before editing the LDL/BMI columns: the LDLR pipeline is untouched and still
+# defines LDL negatively, so each person's HDL row (LOINC 2085-9, mg/dL) is misread as
+# their LDL (defect A9). That is why LDL below equals the HDL value. Total cholesterol
+# (2093-3) is excluded; SBP / creatinine / HbA1c are standalone concepts the LDL export
+# never sees. The has_* / complete_prevent_panel columns are the NEW answer-key columns
+# and are validated by tests/testthat/test-prevent-panel-sql.R, not by verify.py.
+# --------------------------------------------------------------------------
+PREVENT_DATE = "2019-03-03"
+
+
+def build_prevent_scenarios():
+    PD = PREVENT_DATE
+
+    # P28 complete panel, all clean -> INCLUDED by D-013. Also carries a diabetes
+    # diagnosis code, a smoking answer and an antihypertensive, so every PREVENT domain
+    # has at least one clean, fully-wired example on a single person.
+    add_person(1000028, dob="1965-06-15"); add_visits(1000028, STD_VISITS)
+    add_meas(1000028, PD, CHOL_EXCLUDED, 190.0)                          # total cholesterol
+    add_meas(1000028, PD, STRAY, 52.0)                                  # HDL  -> LDL=52 (A9)
+    add_meas(1000028, PD, SBP, 128.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000028, PD, CREAT, 0.9)                                   # mg/dL (<=1, so not even LDL-eligible)
+    add_meas(1000028, PD, BMI_C, 27.5, unit="kg/m2", unit_cid=UNIT_KGM2)
+    add_cond(1000028, "2018-01-01", DM_ICD_T2, DM_STD, "E11.9")
+    add_drug(1000028, "2017-01-01", ANTIHTN[0])
+    add_smoking(1000028, "2020-01-01", "Current Every Day")
+    expect(1000028, "complete PREVENT panel, clean -- INCLUDED (D-013)",
+           CAD_code=0, CAD_code_date=None, LDL=52, Date_LDL_assessment=PD, BMI=27.5,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=1, has_hba1c=0, has_smoking=1, has_antihypertensive=1,
+           complete_prevent_panel=1)
+
+    # P29 missing serum creatinine -> INCOMPLETE, EXCLUDED by D-013. The eligibility
+    # rule needs a test as much as the cleaning does: this person has four of five inputs.
+    add_person(1000029, dob="1970-06-15"); add_visits(1000029, STD_VISITS)
+    add_meas(1000029, PD, CHOL_EXCLUDED, 205.0)
+    add_meas(1000029, PD, STRAY, 48.0)                                  # -> LDL=48
+    add_meas(1000029, PD, SBP, 134.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000029, PD, BMI_C, 31.2, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000029, "incomplete panel: no serum creatinine -- EXCLUDED (D-013)",
+           CAD_code=0, CAD_code_date=None, LDL=48, Date_LDL_assessment=PD, BMI=31.2,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=0,
+           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=0)
+
+    # P30 complete panel, but SBP is DIRTY: an out-of-range 900, a wrong-unit-string row,
+    # and a same-day duplicate, alongside a valid reading. has_systolic_bp=1 and the panel
+    # is complete (the count query does not bound values) -- but a T-003 extractor that
+    # fails to bound systolic BP will pick the 900. Coverage: SBP dirty-record class.
+    add_person(1000030, dob="1958-06-15"); add_visits(1000030, STD_VISITS)
+    add_meas(1000030, PD, CHOL_EXCLUDED, 175.0)
+    add_meas(1000030, PD, STRAY, 60.0)                                  # -> LDL=60
+    add_meas(1000030, "2019-01-01", SBP, 900.0, unit="mmHg", unit_cid=UNIT_MMHG)    # out of range
+    add_meas(1000030, "2019-02-02", SBP, 120.0, unit="mm[Hg]", unit_cid=UNIT_MMHG)  # wrong unit string
+    add_meas(1000030, PD, SBP, 132.0, unit="mmHg", unit_cid=UNIT_MMHG)              # valid
+    add_meas(1000030, PD, SBP, 134.0, unit="mmHg", unit_cid=UNIT_MMHG)              # same-day duplicate
+    add_meas(1000030, PD, CREAT, 1.1)
+    add_meas(1000030, PD, BMI_C, 26.4, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000030, "complete panel, SBP dirty (out-of-range / wrong-unit / same-day dup)",
+           CAD_code=0, CAD_code_date=None, LDL=60, Date_LDL_assessment=PD, BMI=26.4,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=1,
+           note="SBP has out-of-range 900 + wrong-unit + same-day dup; extractor must bound it")
+
+    # P31 creatinine present but ONLY as a censored row (value_as_number NULL,
+    # value_source_value '<0.2'). The completeness query's `value_as_number IS NOT NULL`
+    # guard MUST drop it -> has_serum_creatinine=0 -> INCOMPLETE. A row that looks like
+    # data and is useless as data (cf. defect A2). Coverage: creatinine missing class.
+    add_person(1000031, dob="1972-06-15"); add_visits(1000031, STD_VISITS)
+    add_meas(1000031, PD, CHOL_EXCLUDED, 195.0)
+    add_meas(1000031, PD, STRAY, 55.0)                                  # -> LDL=55
+    add_meas(1000031, PD, SBP, 126.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000031, PD, CREAT, None, vsv="<0.2", op=OP_LT)            # censored -> must not count
+    add_meas(1000031, PD, BMI_C, 24.1, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000031, "creatinine only as a censored NULL-value row -- EXCLUDED (must not count)",
+           CAD_code=0, CAD_code_date=None, LDL=55, Date_LDL_assessment=PD, BMI=24.1,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=0,
+           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=0,
+           note="creatinine row exists but value_as_number is NULL")
+
+    # P32 complete panel + HbA1c 7.2% (diabetic range) but NO diabetes diagnosis code.
+    # Diabetes-by-code and diabetes-by-HbA1c do NOT identify the same people
+    # (prevent_concepts.yaml): has_diabetes_dx=0 while has_hba1c=1. Still INCLUDED on the
+    # five-input panel. Carries a smoking answer + antihypertensive for domain coverage.
+    add_person(1000032, dob="1961-06-15"); add_visits(1000032, STD_VISITS)
+    add_meas(1000032, PD, CHOL_EXCLUDED, 210.0)
+    add_meas(1000032, PD, STRAY, 45.0)                                  # -> LDL=45
+    add_meas(1000032, PD, SBP, 140.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000032, PD, CREAT, 1.0)
+    add_meas(1000032, PD, BMI_C, 33.3, unit="kg/m2", unit_cid=UNIT_KGM2)
+    add_meas(1000032, PD, HBA1C1, 7.2, unit="%", unit_cid=UNIT_PERCENT)
+    add_smoking(1000032, "2020-01-01", "Never")
+    add_drug(1000032, "2016-01-01", ANTIHTN[1])
+    expect(1000032, "complete panel; HbA1c 7.2% but no diabetes code (definitions diverge)",
+           CAD_code=0, CAD_code_date=None, LDL=45, Date_LDL_assessment=PD, BMI=33.3,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=0, has_hba1c=1, has_smoking=1, has_antihypertensive=1,
+           complete_prevent_panel=1)
+
+    # P33 complete panel but AGE 84 (dob 1938) -> outside PREVENT's validated 30-79 range
+    # (Q-S7). The age gate must EXCLUDE it from both the eligible count and the complete
+    # count, even though all five inputs are present. It still appears in the LDLR pheno_df
+    # (that pipeline has no age gate), so it keeps a normal set of LDLR answers.
+    add_person(1000033, dob="1938-06-15"); add_visits(1000033, STD_VISITS)
+    add_meas(1000033, PD, CHOL_EXCLUDED, 200.0)
+    add_meas(1000033, PD, STRAY, 50.0)                                  # -> LDL=50
+    add_meas(1000033, PD, SBP, 130.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000033, PD, CREAT, 0.95)
+    add_meas(1000033, PD, BMI_C, 28.6, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000033, "complete panel but age 84 -- EXCLUDED by the 30-79 gate (Q-S7)",
+           CAD_code=0, CAD_code_date=None, LDL=50, Date_LDL_assessment=PD, BMI=28.6,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel="age-excluded")
+
+    # P34 complete panel but NOT in the srWGS cohort (has_whole_genome_variant=0). Like
+    # P20, it must be ABSENT everywhere -- from the LDLR pheno_df AND from the PREVENT
+    # eligible cohort. Adversarial check that the cohort gate actually filters.
+    add_person(1000034, dob="1968-06-15", wgs=0); add_visits(1000034, STD_VISITS)
+    add_meas(1000034, PD, CHOL_EXCLUDED, 185.0)
+    add_meas(1000034, PD, STRAY, 58.0)
+    add_meas(1000034, PD, SBP, 122.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000034, PD, CREAT, 0.8)
+    add_meas(1000034, PD, BMI_C, 25.4, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000034, "complete panel but has_whole_genome_variant=0 -- MUST BE ABSENT",
+           CAD_code="absent", LDL="absent", any_chol_med="absent", censor_type="absent",
+           CAD_censored_date="absent", complete_prevent_panel="cohort-excluded")
+
+
+# --------------------------------------------------------------------------
 # Randomised filler, so group_by / distinct behaviour is exercised at volume
 # --------------------------------------------------------------------------
-def build_filler(n_from=1000028, n_to=1000300):
+def build_filler(n_from=1000035, n_to=1000307):
     race_pool = [8527] * 55 + [8516] * 20 + [8515] * 12 + [38003615] * 5 + \
                 [903096] * 4 + [1177221] * 2 + [0] * 2
     for pid in range(n_from, n_to + 1):
@@ -695,6 +916,7 @@ TABLES = {
 def main():
     seed_vocabulary()
     build_scenarios()
+    build_prevent_scenarios()
     build_filler()
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -722,7 +944,12 @@ def main():
     cols = ["person_id", "scenario", "CAD_code", "CAD_code_date", "LDL", "Date_LDL_assessment",
             "BMI", "any_chol_med", "any_chol_med_start_date", "LDL_measured_on_meds",
             "PAD_code", "FH_code", "CADFH_code", "HC_code", "CAD_age", "Age_at_LDL_assessment",
-            "race", "censor_type", "CAD_censored_date", "note"]
+            "race", "censor_type", "CAD_censored_date",
+            # PREVENT panel expectations (T-004). Populated only for participants 1000028+.
+            # Validated by tests/testthat/test-prevent-panel-sql.R, not by verify.py.
+            "has_total_cholesterol", "has_hdl_c", "has_systolic_bp", "has_serum_creatinine",
+            "has_bmi", "has_diabetes_dx", "has_hba1c", "has_smoking", "has_antihypertensive",
+            "complete_prevent_panel", "note"]
     out = FIX / "expected" / "answer_key.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as fh:

@@ -8,9 +8,10 @@
 # exists: it CONFIRMS each code resolves before anything depends on it. A code that does not resolve
 # returns zero rows with no error, which is how a phenotype silently empties (D-014).
 #
-# STATUS: the LOINC codes below are the standard ones and three of them are already confirmed present
-# in the fixture (2093-3, 2085-9, 39156-5). ALL OF THEM MUST STILL BE VERIFIED AGAINST THE REAL CDR
-# with the discovery query before the completeness counts are trusted. Do not skip that step.
+# STATUS: the LOINC codes below are the standard ones. As of T-004 (2026-07-20) ALL of them are
+# seeded in the fixture and 01_prevent_concept_discovery.sql resolves every one offline. That is a
+# FIXTURE fact, not a data finding: ALL OF THEM MUST STILL BE VERIFIED AGAINST THE REAL CDR with the
+# discovery query before the completeness counts are trusted. Do not skip that step.
 
 # IMPORTANT LINKAGE FACT (verified in the fixture 2026-07-14, and true of the real CDR):
 #   ICD10CM codes  -> condition_occurrence.condition_source_concept_id
@@ -30,13 +31,13 @@ measurements:                      # -> measurement, via LOINC
   systolic_bp:
     loinc: ["8480-6"]
     unit: mmHg
-    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture at all -- T-004
+    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; still VERIFY against real CDR
     note: "All of Us also carries BP in physical measurements; check both sources before concluding
            a participant has no SBP."
   serum_creatinine:
     loinc: ["2160-0"]
     unit: mg/dL
-    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture -- T-004
+    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; still VERIFY against real CDR
     note: "eGFR is DERIVED from this via CKD-EPI 2021 (race-free). It is not itself a PREVENT input."
   bmi:
     loinc: ["39156-5"]
@@ -45,7 +46,7 @@ measurements:                      # -> measurement, via LOINC
   hba1c:
     loinc: ["4548-4", "17856-6"]
     unit: "%"
-    status: VERIFY_AND_ADD_TO_FIXTURE   # NOT in the fixture -- T-004
+    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; still VERIFY against real CDR
     note: "Only needed for EXTENDED PREVENT, and for defining diabetes. Every extra required input
            SHRINKS the cohort under complete-case (D-013), so this belongs to the model_variant
            decision (H-002), not to the base panel by default."
@@ -53,7 +54,7 @@ measurements:                      # -> measurement, via LOINC
 conditions:                        # -> condition_occurrence.condition_source_concept_id, via ICD10CM
   diabetes:
     icd10_prefix: ["E08", "E09", "E10", "E11", "E13"]
-    status: VERIFY_AND_ADD_TO_FIXTURE
+    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; still VERIFY against real CDR
     note: "Diabetes can be ascertained three ways -- a diagnosis code, HbA1c >= 6.5%, or a glucose-
            lowering drug -- and they do NOT identify the same people. Which definition we use changes
            both the cohort and a PREVENT input. Pick one, write it down, and be consistent."
@@ -66,7 +67,10 @@ drugs:                             # -> drug_exposure, via RxNorm
            class (ACE inhibitors, ARBs, thiazides, CCBs, beta blockers...). Do NOT improvise this list
            from memory. Pull the ingredient set from the All of Us drug hierarchy (cb_criteria /
            concept_ancestor) and record what was pulled. A partial list silently misclassifies treated
-           hypertensives as untreated, which biases a PREVENT input directly."
+           hypertensives as untreated, which biases a PREVENT input directly.
+           FIXTURE NOTE (T-004): the fixture seeds two ILLUSTRATIVE ingredients (lisinopril,
+           hydrochlorothiazide) on participants 1000028/1000032 so a future extractor has rows to find.
+           That is scaffolding, NOT the authoritative list -- this entry stays NEEDS_A_CODE_LIST."
 
 surveys:                           # -> ds_survey / observation
   current_smoking:
@@ -74,4 +78,8 @@ surveys:                           # -> ds_survey / observation
     note: "Smoking in All of Us is primarily SURVEY-derived (The Basics / Lifestyle), not EHR-derived.
            That matters for completeness: a participant with a rich EHR but no completed survey has NO
            smoking status and is therefore EXCLUDED under complete-case (D-013). This may be the
-           single biggest driver of exclusion, and T-017 is what will tell us."
+           single biggest driver of exclusion, and T-017 is what will tell us.
+           FIXTURE NOTE (T-004): the fixture seeds smoking answers in ds_survey (question_concept_id
+           1585857) on participants 1000028/1000032. The real question/answer mapping is still open --
+           this entry stays NEEDS_MAPPING; the fixture rows are only so an extractor has something to
+           read. Note smoking is NOT yet in 02_prevent_panel_completeness.sql's complete-panel flag."

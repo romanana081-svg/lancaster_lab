@@ -83,7 +83,7 @@ python fixture/build/verify.py     # replays the R cleaning logic, diffs against
 Expected, and currently true:
 
 ```
-26 pass, 1 reproduced-bug (expected), 0 unexpected failure(s)
+33 pass, 1 reproduced-bug (expected), 0 unexpected failure(s)
 ```
 
 `verify.py` exits non-zero on any *unexpected* mismatch, so it works as a CI gate as-is. The

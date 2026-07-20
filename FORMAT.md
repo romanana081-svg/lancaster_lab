@@ -649,6 +649,25 @@ third analyte to that measurement query, it silently becomes "LDL". Worth a defe
 **Also seed:** unit concepts (`mg/dL`, `kg/m2`), visit concepts (9201/9202/9203/581477/0), type
 concepts (32817 EHR, 45905771 survey), and the demographic race/sex concepts named in §3.
 
+**PREVENT panel concepts (added by T-004, 2026-07-20).** The study is no longer the LDLR study; the
+PREVENT inputs (D-004, D-013) are seeded so `sql/01_prevent_concept_discovery.sql` resolves every code
+and `sql/02_prevent_panel_completeness.sql` can count a complete panel offline. Total cholesterol
+(`2093-3`), HDL-C (`2085-9`) and BMI (`39156-5`) already existed; T-004 adds:
+
+| PREVENT input | Domain | Filter column | Concept / code |
+|---|---|---|---|
+| Systolic BP | measurement | `measurement_concept_id` | `3004249` (LOINC `8480-6`), unit `mmHg` |
+| Serum creatinine | measurement | `measurement_concept_id` | `3016723` (LOINC `2160-0`), unit `mg/dL` |
+| HbA1c | measurement | `measurement_concept_id` | `3004410` (`4548-4`), `3007263` (`17856-6`), unit `%` |
+| Diabetes | condition | `condition_source_concept_id` | `45591001`/`45591002` (ICD10CM `E11.9`/`E10.9`); SNOMED std `201826` |
+| Antihypertensive | drug | `drug_concept_id` (via `cb_criteria_ancestor`) | `1308216`, `974166` — **illustrative only** |
+| Current smoking | `ds_survey` | `question_concept_id` | `1585857` — **illustrative only** |
+
+The three new **measurement** concepts are seeded as *standalone* `cb_criteria` nodes (not under the
+lipid group `37026687`), precisely so they do **not** get swept into the negatively-defined LDL export
+above. Only HDL (`2085-9`) and total cholesterol (`2093-3`) are lipid-group leaves and therefore
+reach `labs_df` — HDL is misread as LDL (defect A9), total cholesterol is excluded by the notebook.
+
 ---
 
 ## 6. Synthetic cohort design
@@ -765,6 +784,14 @@ confirmed against real data — the fixture is the way to confirm it. Per `CLAUD
 27 hand-authored persons, `1000001`–`1000027`, one per scenario. Each row states what the final
 `pheno_df3` **should** contain. Where the current pipeline is expected to produce something *else*,
 that is stated explicitly — those are the tests that should fail today.
+
+> **T-004 (2026-07-20) added a second wave: `1000028`–`1000034`, the PREVENT panel participants.**
+> They exercise systolic BP, serum creatinine, HbA1c/diabetes, smoking and antihypertensive use, and
+> the answer key gains `has_*` / `complete_prevent_panel` columns (populated only for them). They are
+> checked by `tests/testthat/test-prevent-panel-sql.R` against `sql/02_prevent_panel_completeness.sql`,
+> not only by `verify.py`. Because the LDLR pipeline is unchanged, each one's HDL row is still misread
+> as LDL (A9), which is what their `LDL` column records. Filler now runs `1000035`–`1000307`. See
+> `fixture/README.md` for the per-participant table.
 
 > This section was revised after the fixture was actually built (see §11). Three changes: the
 > adversarial cases A4/A8/A9 got their own persons (P25–P27) rather than being folded into existing

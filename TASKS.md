@@ -106,22 +106,34 @@ because the fixture currently contains almost none of the PREVENT variables.
     rare-variant carriers. (LDL is not a PREVENT input anyway, but the same reflex must not be applied
     to total cholesterol.)
 
-### T-004 — Extend the fixture to the PREVENT domains *(now blocking, not housekeeping)*
-- **Status:** TODO · **Priority:** P0 · **Paired with:** T-003 · **Blocks:** the "test it here" half of
-  this week's goal
-- **Why:** **The fixture currently contains almost none of the PREVENT variables.** Verified
-  2026-07-14: it has LDL (278 rows), triglycerides (202), BMI (170), and exactly **one** HDL row and
-  **one** total-cholesterol row. It has **no systolic BP, no serum creatinine, no HbA1c/diabetes, no
-  smoking status, and no antihypertensive drugs.** You cannot test a PREVENT extractor offline against
-  data that has no PREVENT variables in it, so this is a hard prerequisite for testing anything this
-  week — not a chore to do afterwards.
-- **Done when:** every PREVENT input has (a) seeded `concept` + `cb_criteria` vocabulary so the
-  generated SQL returns rows, (b) at least one deliberately dirty record exercising the relevant defect
-  class (wrong unit, out-of-range, same-day duplicate, missing), and (c) a named participant in
-  `expected/answer_key.csv`. Plus: a participant with an **incomplete panel**, who must be *excluded*
-  by D-013 — the eligibility rule needs a test as much as the cleaning does. `verify.py` stays green.
-- **Notes:** extend, never regenerate blindly — participants `1000001`–`1000027` are hand-authored and
-  the answer key depends on them.
+### T-004 — Extend the fixture to the PREVENT domains ✅ DONE 2026-07-20
+- **Status:** **DONE 2026-07-20** · **Priority:** P0 · **Paired with:** T-003 · **Unblocks:** the "test
+  it here" half of this week's goal, and T-003's offline test.
+- **Why:** **The fixture contained almost none of the PREVENT variables.** Verified 2026-07-14: LDL,
+  triglycerides, BMI, and exactly **one** HDL and **one** total-cholesterol row; **no systolic BP, no
+  serum creatinine, no HbA1c/diabetes, no smoking, no antihypertensives.** You cannot test a PREVENT
+  extractor offline against data with no PREVENT variables in it.
+- **Done when *(met)*:** every PREVENT input has (a) seeded `concept` + `cb_criteria` vocabulary so the
+  discovery/completeness SQL returns rows, (b) ≥1 deliberately dirty record per defect class (wrong
+  unit, out-of-range, same-day duplicate, missing/censored), and (c) a named participant in
+  `expected/answer_key.csv`. Plus an **incomplete-panel** participant *excluded* by D-013.
+  `verify.py` stays green.
+- **Delivered:** seven PREVENT scenario participants `1000028`–`1000034` in `fixture/build/generate.py`
+  (systolic BP, serum creatinine, HbA1c/diabetes, smoking, antihypertensive), new `has_*` /
+  `complete_prevent_panel` answer-key columns, and updated `test-prevent-panel-sql.R` (the old
+  "fixture cannot support a complete panel" GAP assertions are flipped to assert the real counts).
+  `01_prevent_concept_discovery.sql` now resolves **all 7** codes; `02` counts **3** complete panels
+  (`1000028/1000030/1000032`), with `1000029`/`1000031` incomplete and `1000033` (age 84) /`1000034`
+  (not srWGS) gated out. `verify.py`: **33 pass, 1 reproduced-bug, 0 unexpected**. Full testthat suite
+  green.
+- **Key trap navigated:** the new SBP/creatinine/HbA1c concepts are seeded as **standalone**
+  `cb_criteria` nodes, not under the lipid group, so they never enter the notebook's negatively-defined
+  LDL export and cannot pollute the LDLR pipeline. Only HDL/TC do — the pre-existing A9 path — which is
+  why each PREVENT participant's answer-key `LDL` equals their HDL value.
+- **Note for T-003:** antihypertensive and current-smoking rows are seeded as **illustrative** fixture
+  data only — the authoritative RxNorm ingredient list and the survey mapping are still open
+  (`prevent_concepts.yaml`: `NEEDS_A_CODE_LIST` / `NEEDS_MAPPING`). Do not treat the two seeded
+  ingredients as the definition.
 
 ### T-016 — PREVENT in R, validated against the published literature
 - **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** H-002 · **Depends on:** T-003

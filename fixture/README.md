@@ -38,12 +38,12 @@ py fixture/build/verify.py
 Expected output:
 
 ```
-26 pass, 1 reproduced-bug (expected), 0 unexpected failure(s)
+33 pass, 1 reproduced-bug (expected), 0 unexpected failure(s)
 ```
 
 ## Scale
 
-300 participants (301 `person` rows — one is deliberately duplicated), 191 of them in the srWGS
+307 participants (308 `person` rows — one is deliberately duplicated), 198 of them in the srWGS
 cohort (`has_whole_genome_variant = 1`). The rest exist to prove the cohort gate actually filters.
 Real CDR v7 has 413,457 participants and 245,394 with srWGS; the *ratios* are approximated, the
 absolute numbers are not.
@@ -105,8 +105,33 @@ asserts membership (`one_of:130|131|132`), not a fixed value.
 Both are flagged, not fixed — per `CLAUDE.md`, the rough edges in this notebook are load-bearing
 history.
 
+## The PREVENT panel participants (T-004)
+
+Participants `1000028`–`1000034` are the second wave of hand-authored scenarios. They carry the
+domains the LDLR notebook never extracted — systolic BP, serum creatinine, HbA1c/diabetes, smoking,
+antihypertensive use — and are what lets `sql/02_prevent_panel_completeness.sql` finally count a
+complete PREVENT panel offline (D-013, T-017). They are validated by
+`tests/testthat/test-prevent-panel-sql.R`, and the answer key gains `has_*` /
+`complete_prevent_panel` columns (populated only for these rows) to record the per-person truth.
+
+| id | what it exercises | complete panel? |
+|---|---|---|
+| `1000028` | complete panel, all clean; diabetes code + smoking + antihypertensive | ✅ included |
+| `1000029` | missing serum creatinine | ❌ excluded (D-013) |
+| `1000030` | complete, but SBP dirty (out-of-range 900 / wrong-unit / same-day dup) | ✅ included |
+| `1000031` | creatinine present but only as a censored NULL-value row | ❌ excluded (must not count) |
+| `1000032` | complete; HbA1c 7.2% but **no** diabetes code (definitions diverge) | ✅ included |
+| `1000033` | complete but age 84 — outside the 30–79 gate (Q-S7) | ⛔ age-gated out |
+| `1000034` | complete but `has_whole_genome_variant = 0` | ⛔ cohort-gated out (absent) |
+
+**One interaction to know:** the LDLR pipeline is untouched and still defines LDL *negatively*, so
+each PREVENT participant's HDL row (LOINC `2085-9`, mg/dL) is misread as their LDL — the pre-existing
+A9 defect. That is why their `LDL` in the answer key equals the HDL value. The new
+SBP / creatinine / HbA1c concepts are seeded as *standalone* `cb_criteria` nodes (like BMI), so they
+never enter the notebook's lipid-group export and cannot pollute it.
+
 ## Regenerating
 
-`generate.py` seeds `random.seed(20240321)`, so the filler cohort is stable across runs. The 27
-scenario participants (`1000001`–`1000027`) are hand-authored and never randomised, so the answer key
-stays valid when the filler is regenerated.
+`generate.py` seeds `random.seed(20240321)`, so the filler cohort is stable across runs. The 34
+scenario participants (`1000001`–`1000034`) are hand-authored and never randomised (filler runs
+`1000035`–`1000307`), so the answer key stays valid when the filler is regenerated.

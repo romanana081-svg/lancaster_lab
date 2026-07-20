@@ -22,6 +22,51 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-20 — T-004: the fixture finally has the PREVENT panel in it
+
+**Did:** Seeded every PREVENT domain into the fixture, so the thing this week is actually about can be
+tested offline for the first time. Seven hand-authored participants `1000028`–`1000034` in
+`generate.py` carry systolic BP, serum creatinine, HbA1c/diabetes, smoking and antihypertensive use;
+the answer key gained `has_*` / `complete_prevent_panel` columns; filler moved to `1000035`–`1000307`.
+`01_prevent_concept_discovery.sql` now resolves **all 7** codes (was: SBP/creatinine/HbA1c did not
+resolve); `02_prevent_panel_completeness.sql` counts **3** complete panels. `verify.py`: **33 pass, 1
+reproduced-bug, 0 unexpected**; full testthat suite green. Flipped the two testthat assertions that
+deliberately pinned the *absence* of these domains — that flip was the intended signal (the test file
+said so in a comment).
+
+**Learned — the one interaction that could have quietly corrupted the LDLR answer key, and how the
+fixture's own design defused it:**
+
+The notebook defines LDL **negatively** — any measurement in the labs export that isn't triglycerides
+or `3008631`. So a naive add of serum creatinine (which is in **mg/dL**, and can read `> 1`) would
+have been silently swept up as "LDL" for every PREVENT participant, and the same for HDL. But the labs
+export doesn't select by a flat concept-id list — it **walks the `cb_criteria` hierarchy under the lipid
+group** (`37026687`/`3022192`). So the fix was structural, not a matter of picking values: seed
+SBP/creatinine/HbA1c as **standalone** `cb_criteria` nodes (like BMI already is), and they never enter
+the export at all. Only HDL and total cholesterol are lipid-group leaves and reach `labs_df` — HDL
+misread as LDL (the pre-existing A9 defect), TC excluded. That is why each PREVENT participant's
+answer-key `LDL` is deliberately their **HDL** value, and it is faithful rather than a fudge.
+
+**Also learned:** the `value_as_number IS NOT NULL` guard in query 02 is load-bearing and now has a
+test that would catch its removal — participant `1000031` has a creatinine *row* with a NULL value
+(a censored `<0.2`), which must **not** count toward completeness. A row that looks like data and is
+useless as data; if `n_serum_creatinine` ever rises from 3 to 4, that guard has been dropped.
+
+**A discipline point:** antihypertensive and current-smoking are seeded as **illustrative** rows only.
+`prevent_concepts.yaml` marks them `NEEDS_A_CODE_LIST` / `NEEDS_MAPPING`, and the fixture must not
+quietly become the place where an authoritative drug list gets improvised from memory (the exact thing
+that config warns against). The rows exist so a future extractor has something to read; they are not a
+definition, and both configs now say so.
+
+**Decided:** no new `D-` entries — T-004 executes decisions already made (D-013, D-014, T-017).
+
+**Next:** T-004 unblocks the offline half of **T-003** (extract the PREVENT input panel) — the fixture
+can now test an extractor for every input. Still open before the *analysis* can proceed: T-017 needs a
+Workbench run (H-004) for the real counts, and T-015 (ASCVD event ascertainment) is unblocked and
+independent. When T-003's extractor lands, the `has_*` answer-key columns become its per-person oracle.
+
+---
+
 ## 2026-07-14 (evening) — T-017: the feasibility query, and a linkage trap
 
 **Did:** Closed three open items (D-015) and wrote the query the week depends on.
