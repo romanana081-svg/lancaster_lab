@@ -86,6 +86,25 @@ codes live on in the real CDR, rather than trusting the comment.
 
 ---
 
+## RESULT — real CDR `C2025Q4R6` (v8), run 2026-07-20
+
+All 7 PREVENT codes resolve; linkage confirmed (ICD10CM on the source column, 113M rows). Genomic-free
+completeness (has EHR, age 30–79):
+
+| input | n_people | note |
+|---|---|---|
+| eligible (EHR, 30–79) | 414,889 | denominator |
+| total cholesterol `2093-3` | 237,091 | **bottleneck** (with HDL) |
+| HDL-C `2085-9` | 231,776 | **bottleneck** |
+| systolic BP `8480-6` | 403,368 | |
+| serum creatinine `2160-0` | 311,108 | |
+| BMI `39156-5` | 404,317 | |
+| diabetes dx (ICD E08–E13) | 77,436 | ~19% |
+| **complete panel (5 inputs)** | **218,798** | **52.7%** — the analysis-ready N (A-016) |
+
+Ceiling only: "ever" (not baseline-windowed), and `bp_tx`/`smoking` not yet in the complete-panel
+flag. srWGS-restricted genetic cohort is a subset (H-005: no genomic data in this workspace).
+
 ## The reconciliation log — fill this in the first time you run in All of Us
 
 Fixture column is what we assert offline today. Leave the real-CDR columns blank until you have run it;

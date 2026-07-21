@@ -22,6 +22,30 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-20 (Workbench, later) — the feasibility count is in: ~219K complete PREVENT panels
+
+**Did:** Re-ran the reconciliation against the real CDR (`C2025Q4R6`, v8) after `sql/02` was made
+genomic-free (has_ehr_data + age_at_cdr, no srWGS gate). It now returns real numbers instead of the
+srWGS-gated 0.
+
+**The result (A-016 answered):** of **414,889** eligible (EHR, age 30–79), **218,798 (52.7%)** have a
+complete PREVENT panel — TC, HDL, SBP, creatinine, BMI. That is the analysis-ready sample size, and it
+is large: **the study is not underpowered on the phenotype side.** The **lipids are the bottleneck**
+(total cholesterol 237K, HDL 232K; vs SBP 403K, BMI 404K, creatinine 311K) — completeness is set by
+the scarcest member, and it is lipids, which is clinically sensible. Diabetes-by-code 77,436 (~19%).
+Internal consistency holds: complete ≤ min single input (218,798 ≤ 232K).
+
+**Caveats recorded:** this is the "ever" ceiling (a baseline window will shrink it); `bp_tx`/`smoking`
+are not yet in the complete-panel definition (adding them shrinks it); and this is the genomic-free
+cohort — the eventual srWGS genetic cohort is a subset, and this workspace's CDR has no genomic layer
+(H-005). All counts are »20, so H-006 small-cell suppression is satisfied and they are safe to record.
+
+**Next:** run `audit_codes()` to verify each domain's codes pull the right thing (esp. the statin
+concept_id fragility, audit §8), then the extractor at CDR scale — which needs the SQL-side reduction
+first (extract_prevent_panel currently downloads raw rows; at 219K+ that must be pushed into SQL).
+
+---
+
 ## 2026-07-20 (Workbench run) — the reconciliation ran on real data, and the cohort is empty
 
 **Did:** Ran `reconcile_prevent.R` against the real CDR (`wb-silky-artichoke-2408.C2025Q4R6`,
