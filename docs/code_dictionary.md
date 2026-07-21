@@ -100,7 +100,7 @@ A first code here is a **diagnosis** date, not necessarily an event date — the
 
 | Input | How matched | Status |
 |---|---|---|
-| **Statins** (PREVENT `statin`) | RxNorm ingredient concept_ids `1510813, 1539403, 1545958, 1549686, 1551860, 1592085, 1592180, 40165636` | ⚠️ matched by **ID directly** — run audit §8 to confirm these still resolve to statins in v8, and whether `concept_ancestor` expansion is needed. The audit resolves each ID to its ingredient name. |
+| **Statins** (PREVENT `statin`) | RxNorm ingredients (atorvastatin, simvastatin, rosuvastatin, pravastatin, fluvastatin, lovastatin, cerivastatin, pitavastatin), matched via `concept_ancestor` | ✅ **Fixed 2026-07-20**: was a direct concept_id match, which the audit showed found only 27,320 of 143,905 real statin users (~80% missed, because CDR drug rows are clinical drugs not ingredients). Now uses the `concept_ancestor` rollup. |
 | **Antihypertensives** (PREVENT `bp_tx`) | — | 🚧 **PLACEHOLDER (FALSE for everyone)**. The ingredient list is deliberately not written (`prevent_concepts.yaml: NEEDS_A_CODE_LIST`) — do not improvise it; pull from the drug hierarchy with your advisor. |
 
 ## 8. Survey (`ds_survey` / `observation`)

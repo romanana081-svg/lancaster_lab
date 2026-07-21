@@ -28,10 +28,11 @@ if (!exists("egfr_ckd_epi_2021", mode = "function")) {
   }
 }
 
-# RxNorm statin ingredient concept_ids (the notebook's set). NOTE: this matches drug_concept_id
-# DIRECTLY, which is correct against the fixture (where drug_concept_id is the ingredient). In the
-# real CDR a drug row is usually a clinical/branded drug, so this should be widened to descendants
-# via concept_ancestor before the statin flag is trusted upstream. Flagged, not silently assumed.
+# RxNorm statin ingredient concept_ids (atorvastatin, simvastatin, rosuvastatin, pravastatin,
+# fluvastatin, lovastatin, cerivastatin, pitavastatin -- confirmed by audit_codes() §8a in v8).
+# We match a drug to these INGREDIENTS via concept_ancestor, because a CDR drug row is a clinical
+# drug ("atorvastatin 40 mg tablet"), not the ingredient. The audit proved the difference is huge:
+# a direct drug_concept_id match found 27,320 statin users, the ancestor expansion found 143,905.
 .STATIN_INGREDIENTS <- c(1510813, 1539403, 1545958, 1549686, 1551860, 1592085, 1592180, 40165636)
 
 
@@ -82,9 +83,12 @@ extract_prevent_panel <- function(con) {
       AND (c.concept_code LIKE 'E08%' OR c.concept_code LIKE 'E09%' OR c.concept_code LIKE 'E10%'
         OR c.concept_code LIKE 'E11%' OR c.concept_code LIKE 'E13%')")$person_id
 
-  # --- statin (best-effort ingredient match; see .STATIN_INGREDIENTS note) -------------------------
+  # --- statin: match drugs to statin INGREDIENTS via concept_ancestor (see the note above) --------
   statin_ids <- DBI::dbGetQuery(con, sprintf(
-    "SELECT DISTINCT person_id FROM drug_exposure WHERE drug_concept_id IN (%s)",
+    "SELECT DISTINCT de.person_id
+     FROM drug_exposure de
+     JOIN concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
+     WHERE ca.ancestor_concept_id IN (%s)",
     paste(.STATIN_INGREDIENTS, collapse = ",")))$person_id
 
   # --- demographics: age (CDR-computed) + sex, gated to EHR + 30-79 --------------------------------

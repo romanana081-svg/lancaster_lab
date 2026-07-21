@@ -66,6 +66,21 @@ test_that("the complete-panel count matches the genomic-free cohort (4)", {
   })
 })
 
+test_that("statin detection uses concept_ancestor (finds clinical-drug descendants, not just ingredients)", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    # The fixture seeds concept_ancestor (ingredient -> its clinical drug). A person on a statin
+    # CLINICAL drug must be found via the ancestor rollup -- the whole point of the fix. Participants
+    # 1000001/1000004/1000016/1000017 have statin exposures.
+    hit <- DBI::dbGetQuery(con,
+      "SELECT DISTINCT de.person_id
+       FROM drug_exposure de JOIN concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
+       WHERE ca.ancestor_concept_id IN (1510813,1539403,1545958,1549686,1551860,1592085,1592180,40165636)")$person_id
+    expect_true(1000001 %in% hit)
+    expect_true(length(hit) > 0)
+  })
+})
+
 test_that("the output columns are exactly what the PREVENT equation consumes", {
   skip_if_no_fixture()
   with_fixture(function(con) {

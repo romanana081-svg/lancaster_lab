@@ -124,6 +124,7 @@ DIRTY_KGM2 = ["kg/m2", "kg/m2", "kg/m2", "kg/m^2", "Kg/M2", ""]
 # Row accumulators
 # --------------------------------------------------------------------------
 concept, cb_criteria, cb_anc, cb_person = [], [], [], []
+con_anc = []   # concept_ancestor (OMOP): ingredient -> descendant drugs, for the statin rollup
 person, visit, cond, proc, meas, obs, drug, survey = [], [], [], [], [], [], [], []
 answers = []
 
@@ -215,6 +216,8 @@ def seed_vocabulary():
         add_concept(clinical, f"Clinical drug for ingredient {c}", "Drug", "RxNorm", "Clinical Drug", "S", str(clinical))
         cb_anc.append((c, c))
         cb_anc.append((c, clinical))
+        con_anc.append((c, c, 0, 0))          # OMOP concept_ancestor: ingredient is its own ancestor
+        con_anc.append((c, clinical, 1, 1))   # ...and ancestor of the clinical drug beneath it
 
     # --- supporting concepts ----------------------------------------------
     add_concept(UNIT_MGDL, "milligram per deciliter", "Unit", "UCUM", "Unit", "S", "mg/dL")
@@ -264,6 +267,8 @@ def seed_vocabulary():
         add_concept(clinical, f"Clinical drug for ingredient {c}", "Drug", "RxNorm", "Clinical Drug", "S", str(clinical))
         cb_anc.append((c, c))
         cb_anc.append((c, clinical))
+        con_anc.append((c, c, 0, 0))          # OMOP concept_ancestor: ingredient is its own ancestor
+        con_anc.append((c, clinical, 1, 1))   # ...and ancestor of the clinical drug beneath it
 
     # Smoking survey question.
     add_concept(SMOKING_Q, "Smoking status", "Observation", "PPI", "Question", "S", "smoking_status")
@@ -916,6 +921,7 @@ DROP TABLE IF EXISTS person_ext; CREATE TABLE person_ext(
 
 TABLES = {
     "concept": concept, "cb_criteria": cb_criteria, "cb_criteria_ancestor": cb_anc,
+    "concept_ancestor": con_anc,
     "cb_search_person": cb_person, "person": person, "visit_occurrence": visit,
     "condition_occurrence": cond, "procedure_occurrence": proc, "measurement": meas,
     "observation": obs, "drug_exposure": drug, "ds_survey": survey,

@@ -35,9 +35,25 @@
   r <- tryCatch(DBI::dbGetQuery(con, sql),
                 error = function(e) { cat("  QUERY ERROR: ", conditionMessage(e), "\n"); NULL })
   if (!is.null(r)) {
-    if (nrow(r) == 0) cat("  (no rows -- nothing matched)\n") else print(r, row.names = FALSE)
+    # as.data.frame so ALL rows print -- bigrquery returns tibbles, which truncate to 10.
+    if (nrow(r) == 0) cat("  (no rows -- nothing matched)\n") else print(as.data.frame(r), row.names = FALSE)
   }
   invisible(r)
+}
+
+
+#' Per-code unit breakdown with the MEAN value in each unit -- answers "what unit are these values
+#' really in?" (e.g. creatinine reading ~115 on average is mumol/L, not mg/dL). Cheap: one query.
+audit_units <- function(con) {
+  .section(con, "Measurement units + per-unit mean value (which unit are the values REALLY in?)",
+    "SELECT c.concept_code, m.unit_source_value AS unit,
+            COUNT(*) AS n_rows, ROUND(AVG(m.value_as_number), 2) AS mean_val
+     FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
+     WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
+       AND c.concept_code IN ('2093-3','2085-9','2160-0','39156-5','8480-6')
+     GROUP BY c.concept_code, m.unit_source_value
+     ORDER BY c.concept_code, n_rows DESC")
+  invisible(NULL)
 }
 
 
