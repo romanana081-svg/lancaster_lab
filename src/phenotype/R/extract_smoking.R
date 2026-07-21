@@ -1,0 +1,84 @@
+# extract_smoking.R — derive current_smoking (a PREVENT input) from the survey. T-003.
+#
+# STATUS: PROVISIONAL MAPPING. prevent_concepts.yaml marks current_smoking NEEDS_MAPPING and forbids
+# improvising the answer set from memory. The authoritative mapping must come from
+# sql/03_smoking_survey_discovery.sql run against the real CDR. Until then this uses a transparent,
+# reviewable default classifier and stamps every row `smoking_mapping = "PROVISIONAL"`, so a risk score
+# built on it can never be mistaken for final. This mirrors the bp_tx/smoking placeholders in
+# extract_prevent.R — here smoking becomes *derivable* rather than hard-FALSE, but still provisional.
+#
+# BASELINE: most-recent survey answer per person (the same Q-S6 placeholder anchor the measurement
+# extractor uses; see extract_prevent.R). Applied symmetrically to everyone. No earliest-value anchor.
+
+#' Default provisional classifier: does a raw survey answer indicate CURRENT smoking?
+#'
+#' PREVENT's input is *current* smoking (former and never both map to FALSE). The default rule is
+#' deliberately simple and legible so a reviewer can see exactly what it does: an answer counts as
+#' current smoking if it mentions "current" (or an every-day / some-days frequency) and does NOT say
+#' former / never / not-at-all. It classifies the fixture answers correctly ("Current Every Day" ->
+#' TRUE, "Never" -> FALSE) and is a plausible first cut at the real answers — but it is NOT the
+#' authority; sql/03 is. Replace this with the confirmed answer_concept_id set once discovered.
+#'
+#' @param answer character vector of raw survey answer strings.
+#' @return logical vector; NA where the answer is missing/uninformative (skip, prefer-not-to-answer).
+is_current_smoker_default <- function(answer) {
+  a <- tolower(trimws(answer %||% NA_character_))
+  negative <- grepl("former|never|not at all|no smok|non[- ]?smok", a)
+  positive <- grepl("current|every day|some day|daily", a)
+  out <- ifelse(is.na(a) | a %in% c("", "pmi: skip", "pmi: prefer not to answer",
+                                    "prefer not to answer", "skip", "dont know", "don't know"),
+                NA, positive & !negative)
+  as.logical(out)
+}
+
+`%||%` <- if (exists("%||%", mode = "function")) `%||%` else function(a, b) if (is.null(a)) b else a
+
+#' Extract current_smoking per person from the survey table.
+#'
+#' @param con an open DBI connection (BigQuery in the Workbench, the DuckDB fixture offline).
+#' @param question_concept_ids optional integer vector to restrict to specific smoking questions
+#'   (the ones sql/03 confirms). NULL (default) = any survey question whose text matches smoking.
+#' @param classifier function(answer) -> logical, the raw-answer -> current-smoker rule. Defaults to
+#'   is_current_smoker_default(); pass your own once the discovery step nails the answer set.
+#' @return data.frame(person_id, smoking, smoking_answer, smoking_date, smoking_mapping), one row per
+#'   person, from that person's MOST-RECENT informative smoking answer.
+extract_smoking <- function(con, question_concept_ids = NULL, classifier = is_current_smoker_default) {
+  suppressPackageStartupMessages(library(dplyr))
+
+  where_q <- if (is.null(question_concept_ids)) {
+    "LOWER(s.question) LIKE '%smok%'"
+  } else {
+    sprintf("s.question_concept_id IN (%s)", paste(as.integer(question_concept_ids), collapse = ","))
+  }
+  raw <- DBI::dbGetQuery(con, sprintf("
+    SELECT s.person_id, s.answer AS smoking_answer,
+           CAST(s.survey_datetime AS DATE) AS smoking_date
+    FROM ds_survey s
+    WHERE %s AND s.answer IS NOT NULL", where_q))
+
+  if (!nrow(raw)) {
+    return(data.frame(person_id = integer(), smoking = logical(),
+                      smoking_answer = character(), smoking_date = as.Date(character()),
+                      smoking_mapping = character(), stringsAsFactors = FALSE))
+  }
+
+  raw$is_current <- classifier(raw$smoking_answer)
+  # Keep only informative answers (a non-NA classification), then take each person's MOST RECENT one.
+  # Ties on the same date: an informative answer wins, then current (TRUE) is kept conservatively.
+  inf <- raw[!is.na(raw$is_current), , drop = FALSE]
+  if (!nrow(inf)) {
+    return(data.frame(person_id = integer(), smoking = logical(),
+                      smoking_answer = character(), smoking_date = as.Date(character()),
+                      smoking_mapping = character(), stringsAsFactors = FALSE))
+  }
+  out <- inf %>%
+    group_by(person_id) %>%
+    filter(smoking_date == max(smoking_date)) %>%
+    summarise(smoking        = any(is_current),          # same-day: any current answer -> current
+              smoking_answer = smoking_answer[which.max(is_current)],
+              smoking_date   = max(smoking_date),
+              .groups = "drop") %>%
+    as.data.frame()
+  out$smoking_mapping <- "PROVISIONAL"   # cleared only when sql/03 confirms the real answer set
+  out
+}
