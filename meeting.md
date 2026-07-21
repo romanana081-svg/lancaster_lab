@@ -183,15 +183,74 @@ portable to BigQuery. Two run as SQL via `run_sql_file(...)`, one is an R extrac
 
 ---
 
-## §4 — Questions for the advisor
-*(to write — ranked, most decision-critical first)*
+## §4 — Questions for the advisor (ranked by how much they unblock)
 
----
+1. **Baseline anchor for non-cases (Q-S6) — the #1 ETL decision.** "Use data before the event" defines
+   a baseline for cases and nobody else. What anchor do we apply *symmetrically* to everyone —
+   **most-recent** (current placeholder), **first complete panel**, or a **landmark time**? Bring the
+   `sql/04` table: its `n_multi_date` column is how many people the choice even affects. This changes
+   `extract_prevent.R`, so it must be settled before the panel is frozen. (A-001: getting it wrong makes
+   every predictor look stronger than it is, with no bug anywhere.)
+2. **PREVENT model variant (H-002): base or extended?** We validated the **base** model. Extended adds
+   HbA1c / UACR / social-deprivation-index — and every extra required input **shrinks** the complete-case
+   cohort (D-013). Decide before the panel is final, because it sets the required input list.
+3. **Diabetes definition.** Currently diagnosis-code (ICD10CM E08–E13; real run: 77,436 ≈ 19%). It can
+   also be HbA1c ≥ 6.5% or a glucose-lowering drug — the three identify **different people**, and it is
+   both a cohort variable and a PREVENT input. Confirm the definition.
+4. **Sex-specific scoring excludes ~3,942 people.** PREVENT and CKD-EPI are sex-specific, so participants
+   with `sex_at_birth` ≠ male/female get no score. Exclude explicitly? Report separately? (Equity /
+   generalizability, A-015.)
+5. **Antihypertensive list (bp_tx, NEEDS_A_CODE_LIST).** It's a PREVENT input, currently FALSE for
+   everyone. Does the advisor have an authoritative RxNorm ingredient set, or approve pulling the class
+   (ACE/ARB/thiazide/CCB/β-blocker…) from `cb_criteria`? A partial list silently misclassifies.
+6. **30-year horizon age range.** AHAprevent returns NA for 30yr at age ≥ 60 (window defined 30–59);
+   `preventr` extrapolates. We report 30yr only for 30–59 (primary is 10yr). Confirm that's intended.
 
-## §5 — Top handoff.md issues to raise
-*(to write)*
+## §5 — Blockers to raise (handoff.md — only a human can unblock)
 
----
+1. **🔴 H-005 — this workspace has NO genomic data.** All four `has_*_variant` flags read 0 for
+   everyone (0 / 747,029). D-013 makes the cohort *the srWGS participants*, so this blocks the genetic
+   half **and the final cohort**. The phenotype/PREVENT half is done and validated — **genetics cannot
+   start until genomic access is granted and the workspace is provisioned.** This is the single most
+   important thing to resolve today: *is srWGS access actually enabled for this account/workspace?*
+2. **H-002 — PREVENT reference + variant** (partly closed: we validated `AHAprevent` against `preventr`;
+   the base/extended decision is question #2 above).
+3. **H-006 / Q-R1 — may the repo be public?** It was briefly public (to clone into the Workbench),
+   exposing the bucket UUID + Megan Lancaster's institutional email. Settle before making it public again,
+   and make the courtesy call to Megan.
 
-## §6 — End-to-end patient demo
-*(to write — extractor → PREVENT scores → a few named example patients + counts)*
+## §6 — End-to-end patient demo (show it works)
+
+Goal: real CDR data → PREVENT inputs → PREVENT risk, with a sensible risk gradient. In the Workbench:
+
+```r
+# one-time: the official AHA package (not on CRAN)
+# remotes::install_github("AHA-DS-Analytics/PREVENT")
+
+source("src/phenotype/R/run_sql.R")
+source("src/phenotype/R/extract_prevent.R")
+source("src/ascvd/prevent/run_prevent.R")
+
+con    <- connect_cdr()
+panel  <- extract_prevent_panel(con)      # 216,167 scorable (already ran)
+scored <- run_prevent(panel)              # appends prevent_base_{10,30}yr_{ASCVD,CVD,HF}
+
+# 1. It produces risk, and incomplete panels honestly get NA (never a fabricated number)
+mean(!is.na(scored$prevent_base_10yr_ASCVD))          # fraction scorable
+summary(scored$prevent_base_10yr_ASCVD)               # 10yr ASCVD risk distribution
+
+# 2. A handful of example patients (the "it works on real people" slide)
+cols <- c("person_id","age","sex","sbp","total_c","hdl_c","egfr","bmi","dm","statin",
+          "prevent_base_10yr_ASCVD","prevent_base_30yr_ASCVD")
+head(scored[!is.na(scored$prevent_base_10yr_ASCVD), cols], 10)
+
+# 3. Risk rises with age and differs by sex -> face-validity the advisor can eyeball
+scored$ageband <- cut(scored$age, c(30,40,50,60,70,80), right = FALSE)
+aggregate(prevent_base_10yr_ASCVD ~ ageband + sex, scored,
+          FUN = function(x) round(mean(x), 2))
+```
+
+**Honesty flags to say out loud:** `bp_tx` and `smoking` are placeholders (FALSE for everyone) in this
+panel, so these risks are **slight underestimates** — every row carries `placeholder_inputs` saying so.
+Wiring in `extract_smoking()` (provisional) and the antihypertensive list (question #5) removes the
+first caveat. This is a *works-end-to-end* demo, not the final scored cohort.
