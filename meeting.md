@@ -176,6 +176,17 @@ default broad `LIKE '%smok%'` over-pulls (e-cig/cigar/hookah/cannabis; billed 20
 answer_concept_id map in extract_smoking.R and flip prevent_concepts.yaml off NEEDS_MAPPING (needs a
 matching fixture update).
 
+**SMOKING COVERAGE IS THE REAL BOTTLENECK (headline finding, 2026-07-21).** Survey smoking coverage is
+**39.8%**. Requiring smoking drops the scorable cohort **216,167 → 84,176 (−61%, −131,991 people)**.
+84k is still well-powered, BUT the 61% lost are survey non-completers who differ systematically (access,
+SES, ancestry — A-015), so requiring survey smoking **entangles cohort membership with ancestry** — the
+exact confound the PRS/rare-variant work must avoid. This makes smoking-handling a top-tier design
+decision. Options for the advisor: (A) require survey smoking → 84k, selected; (B) default missing →
+non-smoker → keep 216k, misclassification bias; (C) **supplement survey with EHR smoking** (SNOMED
+tobacco-use codes in `observation`; sql/03's commented follow-up targets it) → likely recovers much of
+the loss — RECOMMEND trying C first; (D) impute. Quick test: run sql/03's observation follow-up to see
+how many additional people have an EHR smoking code.
+
 **Q-S6 evidence — the anchor choice is NOT free (decisive).** Most of the cohort has MANY repeat
 measurements: mean dates/person SBP 25, creatinine 20, BMI 16, lipids ~7; and the majority have >1
 date (SBP 336,506 of 571,419; creatinine 317,657 of 358,268; lipids ~208–216k of ~263–270k). So
