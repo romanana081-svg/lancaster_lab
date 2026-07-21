@@ -82,3 +82,32 @@ extract_smoking <- function(con, question_concept_ids = NULL, classifier = is_cu
   out$smoking_mapping <- "PROVISIONAL"   # cleared only when sql/03 confirms the real answer set
   out
 }
+
+#' Attach a derived smoking status onto a PREVENT panel, replacing the FALSE placeholder.
+#'
+#' extract_prevent_panel() sets smoking = FALSE for everyone (a placeholder). This swaps in the real
+#' per-person value from extract_smoking(). A person with NO smoking answer becomes NA -- honest
+#' "unknown", not "non-smoker" -- so run_prevent() returns NA for them rather than a risk that assumes
+#' they don't smoke. Because smoking (survey-derived) may be the single biggest driver of exclusion
+#' (prevent_concepts.yaml), the cost of requiring it is surfaced explicitly, not hidden:
+#'   * has_smoking_answer      -- does this person have a usable smoking answer at all?
+#'   * complete_panel          -- unchanged (the 5 measurements + demographics; smoking NOT required)
+#'   * complete_panel_smoking  -- complete_panel AND smoking known: the count if smoking is REQUIRED.
+#' Both counts are kept so switching smoking from placeholder to required is transparent, not a silent
+#' shrink of the cohort. Whether missing smoking should exclude (NA) or default to non-smoker is an
+#' advisor question.
+#'
+#' @param panel output of extract_prevent_panel().
+#' @param smk   output of extract_smoking() (person_id, smoking, ...).
+#' @return panel with smoking replaced, plus has_smoking_answer and complete_panel_smoking.
+attach_smoking <- function(panel, smk) {
+  suppressPackageStartupMessages(library(dplyr))
+  panel$smoking <- NULL                                   # drop the placeholder column
+  panel <- left_join(panel, smk[, c("person_id", "smoking")], by = "person_id")
+  panel$has_smoking_answer     <- !is.na(panel$smoking)
+  panel$complete_panel_smoking <- panel$complete_panel & panel$has_smoking_answer
+  panel$placeholder_inputs     <- "bp_tx (plan A); smoking=survey(provisional); baseline=most_recent (Q-S6)"
+  # keep smoking next to the other inputs; new flags at the end
+  front <- c("person_id","age","sex","sbp","bp_tx","total_c","hdl_c","statin","dm","smoking","egfr","bmi")
+  panel[, c(front, setdiff(names(panel), front))]
+}

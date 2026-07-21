@@ -164,6 +164,24 @@ portable to BigQuery. Two run as SQL via `run_sql_file(...)`, one is an R extrac
   and, once the answer set is nailed, replace the default classifier and flip prevent_concepts.yaml off
   NEEDS_MAPPING.
 
+### RESULTS from the 2026-07-21 Workbench run
+
+**Smoking mapping RESOLVED (closes NEEDS_MAPPING).** Discovery (sql/03) shows the clean PREVENT
+current-smoking definition is question **1585860 "Smoking: Smoke Frequency"**: current = Every Day
+(1585863, 158,283) or Some Days (1585861, 65,961) → **~224k current smokers**; Not at all (1585862,
+31,820) = former; never-smokers skip via 1585857 "100 Cigs Lifetime" = No. Run
+`extract_smoking(con, question_concept_ids = 1585860L)` for the clean per-person table. NOTE: the
+default broad `LIKE '%smok%'` over-pulls (e-cig/cigar/hookah/cannabis; billed 20 GB, 6M rows) and its
+154,894 TRUE is over-inclusive — do not quote it. TODO after meeting: set the default question +
+answer_concept_id map in extract_smoking.R and flip prevent_concepts.yaml off NEEDS_MAPPING (needs a
+matching fixture update).
+
+**Q-S6 evidence — the anchor choice is NOT free (decisive).** Most of the cohort has MANY repeat
+measurements: mean dates/person SBP 25, creatinine 20, BMI 16, lipids ~7; and the majority have >1
+date (SBP 336,506 of 571,419; creatinine 317,657 of 358,268; lipids ~208–216k of ~263–270k). So
+most-recent vs first-complete-panel vs landmark give materially different values for most people. The
+deferral is a real scientific choice, not a free one — **the advisor must pick the anchor** (A-001).
+
 ### Q-S6 baseline anchor (evidence for the deferred anchoring decision)
 - **`sql/04_baseline_anchor_diagnostics.sql`** — answers the one question the advisor needs to make the
   Q-S6 call: **for how many people does the anchor choice even change the value?** It reports, per
@@ -229,18 +247,27 @@ Goal: real CDR data → PREVENT inputs → PREVENT risk, with a sensible risk gr
 
 source("src/phenotype/R/run_sql.R")
 source("src/phenotype/R/extract_prevent.R")
+source("src/phenotype/R/extract_smoking.R")
 source("src/ascvd/prevent/run_prevent.R")
 
-con    <- connect_cdr()
-panel  <- extract_prevent_panel(con)      # 216,167 scorable (already ran)
-scored <- run_prevent(panel)              # appends prevent_base_{10,30}yr_{ASCVD,CVD,HF}
+con   <- connect_cdr()
+panel <- extract_prevent_panel(con)                       # smoking = FALSE placeholder
+smk   <- extract_smoking(con, question_concept_ids = 1585860L)  # REAL current smoking (Smoke Frequency)
+panel <- attach_smoking(panel, smk)                       # swap placeholder -> real; NA if no answer
+scored <- run_prevent(panel)                              # appends prevent_base_{10,30}yr_{ASCVD,CVD,HF}
+
+# 0. The cost of REQUIRING smoking (survey coverage): measurement-only vs smoking-required
+sum(panel$complete_panel)            # 216,167 -- the 5 measurements + demographics
+mean(panel$has_smoking_answer)       # fraction with any smoking answer
+sum(panel$complete_panel_smoking)    # scorable when smoking is also required (the honest N)
+table(panel$smoking, useNA = "always")
 
 # 1. It produces risk, and incomplete panels honestly get NA (never a fabricated number)
 mean(!is.na(scored$prevent_base_10yr_ASCVD))          # fraction scorable
 summary(scored$prevent_base_10yr_ASCVD)               # 10yr ASCVD risk distribution
 
 # 2. A handful of example patients (the "it works on real people" slide)
-cols <- c("person_id","age","sex","sbp","total_c","hdl_c","egfr","bmi","dm","statin",
+cols <- c("person_id","age","sex","sbp","total_c","hdl_c","egfr","bmi","dm","smoking","statin",
           "prevent_base_10yr_ASCVD","prevent_base_30yr_ASCVD")
 head(scored[!is.na(scored$prevent_base_10yr_ASCVD), cols], 10)
 
@@ -250,7 +277,13 @@ aggregate(prevent_base_10yr_ASCVD ~ ageband + sex, scored,
           FUN = function(x) round(mean(x), 2))
 ```
 
-**Honesty flags to say out loud:** `bp_tx` and `smoking` are placeholders (FALSE for everyone) in this
-panel, so these risks are **slight underestimates** — every row carries `placeholder_inputs` saying so.
-Wiring in `extract_smoking()` (provisional) and the antihypertensive list (question #5) removes the
-first caveat. This is a *works-end-to-end* demo, not the final scored cohort.
+**Now smoking is REAL** (question 1585860, provisional answer map), not a placeholder. Two honesty flags
+remain to say out loud:
+- **`bp_tx` is still a placeholder** (FALSE for everyone) — antihypertensive list is question #5. So
+  risks remain a slight underestimate; every row's `placeholder_inputs` says so.
+- **Requiring smoking shrinks the scorable N** from `complete_panel` (216,167) to
+  `complete_panel_smoking`. Missing smoking = `NA` (unknown), not assumed non-smoker — that is the
+  honest default and it makes the exclusion visible. Whether to require it, or default missing to
+  non-smoker, is an advisor question (it may be the biggest single exclusion driver).
+- The smoking answer map is still **PROVISIONAL** until the 1585860 answer_concept_ids are pinned
+  (Every Day 1585863 / Some Days 1585861 = current) — the meeting can confirm the definition.

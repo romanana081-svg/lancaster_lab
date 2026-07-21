@@ -51,3 +51,43 @@ test_that("restricting to a non-smoking question_concept_id yields no rows (the 
     expect_equal(nrow(sm), 0)
   })
 })
+
+test_that("attach_smoking swaps the placeholder for the real value and surfaces the cost", {
+  skip_if_no_fixture()
+  source(file.path("..", "..", "src", "phenotype", "R", "extract_prevent.R"), local = TRUE)
+  with_fixture(function(con) {
+    panel <- extract_prevent_panel(con)
+    smk   <- extract_smoking(con)
+    p2    <- attach_smoking(panel, smk)
+
+    # 1000028 seeded "Current Every Day" -> smoking becomes TRUE (was FALSE placeholder)
+    expect_true(p2$smoking[p2$person_id == 1000028])
+    expect_true(p2$has_smoking_answer[p2$person_id == 1000028])
+    # 1000032 seeded "Never" -> FALSE, but a genuine answer (not a placeholder)
+    expect_false(p2$smoking[p2$person_id == 1000032])
+    expect_true(p2$has_smoking_answer[p2$person_id == 1000032])
+    # someone with no smoking answer -> NA (unknown), not FALSE
+    no_ans <- p2[!p2$has_smoking_answer, ]
+    expect_true(all(is.na(no_ans$smoking)))
+    # the stricter count is <= the measurement-only complete count
+    expect_lte(sum(p2$complete_panel_smoking), sum(p2$complete_panel))
+    # measurement-only complete count is unchanged by attaching smoking
+    expect_equal(sum(p2$complete_panel), sum(panel$complete_panel))
+  })
+})
+
+test_that("attach_smoking changes the PREVENT score (smoking actually feeds the equation)", {
+  skip_if_no_fixture()
+  if (!requireNamespace("AHAprevent", quietly = TRUE)) skip("AHAprevent not installed")
+  source(file.path("..", "..", "src", "phenotype", "R", "extract_prevent.R"), local = TRUE)
+  source(file.path("..", "..", "src", "ascvd", "prevent", "run_prevent.R"), local = TRUE)
+  with_fixture(function(con) {
+    panel <- extract_prevent_panel(con)
+    base  <- run_prevent(panel)                              # smoking = FALSE placeholder
+    withs <- run_prevent(attach_smoking(panel, extract_smoking(con)))
+    r0 <- base$prevent_base_10yr_ASCVD[base$person_id == 1000028]
+    r1 <- withs$prevent_base_10yr_ASCVD[withs$person_id == 1000028]
+    # 1000028 is a current smoker -> real risk must exceed the non-smoker placeholder risk
+    expect_gt(r1, r0)
+  })
+})
