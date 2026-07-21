@@ -22,6 +22,31 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-07-20 (local) — push the measurement cleaning into SQL so the extractor scales to the CDR
+
+**Did:** Rewrote the measurement block of `extract_prevent_panel()` so the bounding, the
+most-recent-date pick, and the same-day average all happen **in one SQL query** instead of pulling raw
+rows into R and cleaning them there. The query returns ~one row per person per input (a `CTE bounded`
+applies the per-code physiologic bounds, `latest` marks each person/code's `MAX(dt)` via a window, and
+the outer `SELECT … AVG(value) … GROUP BY` averages same-day ties), then R just pivots long→wide.
+
+**Why it was necessary:** the previous version ran `SELECT … FROM measurement JOIN concept` unbounded
+and did the cleaning in R. On the fixture that is fine; against the real CDR that is ~62M measurement
+rows over the wire before the first filter. The prior session's feasibility count (218,798 complete
+panels) is exactly the scale that makes this untenable — flagged as the blocking "Next" step.
+
+**Learned / verified:** the behaviour is bit-identical to the in-R cleaning — the same-day-average test
+(`1000030`: mean(132,134)=133, the out-of-range 900 dropped) and the complete-panel count (4) both
+still pass unchanged. SQL uses only portable constructs (`CAST … AS DATE`, `MAX() OVER (PARTITION BY)`,
+`AVG … GROUP BY`) so it runs identically in DuckDB offline and BigQuery in the Workbench. Full testthat
+suite green (extract_prevent 21/21).
+
+**Next:** run the extractor at CDR scale in the Workbench (should now stream, not download raw rows);
+`bp_tx`/`smoking` still placeholders (NEEDS_A_CODE_LIST / NEEDS_MAPPING); Q-S6 baseline anchor still
+open (most-recent is the placeholder). Then T-016 (PREVENT equation validated vs Khan et al.).
+
+---
+
 ## 2026-07-20 (Workbench, later) — the feasibility count is in: ~219K complete PREVENT panels
 
 **Did:** Re-ran the reconciliation against the real CDR (`C2025Q4R6`, v8) after `sql/02` was made

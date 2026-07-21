@@ -44,36 +44,40 @@ if (!exists("egfr_ckd_epi_2021", mode = "function")) {
 extract_prevent_panel <- function(con) {
   suppressPackageStartupMessages({ library(dplyr); library(tidyr) })
 
-  # --- measurements: one query, then clean each input (bounds + most-recent baseline) -------------
-  meas <- DBI::dbGetQuery(con, "
-    SELECT m.person_id, c.concept_code AS code, m.value_as_number AS value,
-           CAST(m.measurement_date AS DATE) AS dt
-    FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
-    WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
-      AND c.concept_code IN ('2093-3','2085-9','8480-6','2160-0','39156-5')")
+  # --- measurements: bound + reduce to ONE most-recent value per person, IN SQL (CDR-scale) -------
+  # The bounding, the most-recent-date pick, and the same-day average all happen in SQL, so only ~one
+  # row per person per input comes back -- never the ~62M raw rows. Physiologic bounds (exclusive, to
+  # match the earlier in-R cleaning) also absorb the wild unit inconsistency: an in-range value is
+  # kept whatever its unit label, an out-of-scale one (cholesterol in mmol/L ~5; creatinine garbage
+  # >20) is dropped. Baseline = most recent (Q-S6 placeholder); same-day ties averaged (D-009).
+  m_long <- DBI::dbGetQuery(con, "
+    WITH bounded AS (
+      SELECT m.person_id, c.concept_code AS code, m.value_as_number AS value,
+             CAST(m.measurement_date AS DATE) AS dt
+      FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
+      WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
+        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
+           OR (c.concept_code = '2085-9'  AND m.value_as_number > 10  AND m.value_as_number < 150)
+           OR (c.concept_code = '8480-6'  AND m.value_as_number > 60  AND m.value_as_number < 250)
+           OR (c.concept_code = '2160-0'  AND m.value_as_number > 0.1 AND m.value_as_number < 20)
+           OR (c.concept_code = '39156-5' AND m.value_as_number > 10  AND m.value_as_number < 80) )
+    ),
+    latest AS (
+      SELECT person_id, code, value, dt,
+             MAX(dt) OVER (PARTITION BY person_id, code) AS max_dt
+      FROM bounded
+    )
+    SELECT person_id, code, AVG(value) AS value
+    FROM latest WHERE dt = max_dt
+    GROUP BY person_id, code")
 
-  # code -> (physiologic low, high, output column). Bounds are deliberately wide; they also catch
-  # the common unit confusions (e.g. cholesterol in mmol/L is ~5 and falls below the mg/dL floor).
-  specs <- list(
-    c("2093-3",  50, 500, "total_c"),
-    c("2085-9",  10, 150, "hdl_c"),
-    c("8480-6",  60, 250, "sbp"),
-    c("2160-0", 0.1,  20, "creatinine"),
-    c("39156-5", 10,  80, "bmi"))
-
-  clean_one <- function(spec) {
-    cd <- spec[1]; lo <- as.numeric(spec[2]); hi <- as.numeric(spec[3]); nm <- spec[4]
-    d <- meas[meas$code == cd & meas$value > lo & meas$value < hi, , drop = FALSE]
-    if (!nrow(d)) return(setNames(data.frame(person_id = integer(), x = numeric()),
-                                  c("person_id", nm)))
-    out <- d %>%
-      group_by(person_id) %>%
-      filter(dt == max(dt)) %>%              # most-recent = baseline (Q-S6 placeholder)
-      summarise(x = mean(value), .groups = "drop")  # average same-day ties (D-009)
-    setNames(out, c("person_id", nm))
-  }
-  m_wide <- Reduce(function(acc, s) full_join(acc, clean_one(s), by = "person_id"),
-                   specs, init = data.frame(person_id = integer()))
+  code_map <- c("2093-3" = "total_c", "2085-9" = "hdl_c", "8480-6" = "sbp",
+                "2160-0" = "creatinine", "39156-5" = "bmi")
+  m_long$col <- unname(code_map[m_long$code])
+  m_wide <- tidyr::pivot_wider(m_long[, c("person_id", "col", "value")],
+                               names_from = "col", values_from = "value")
+  for (nm in c("total_c", "hdl_c", "sbp", "creatinine", "bmi"))   # ensure all columns exist
+    if (!nm %in% names(m_wide)) m_wide[[nm]] <- NA_real_
 
   # --- diabetes by diagnosis code (ICD10CM on the SOURCE concept column -- the linkage trap) -------
   dm_ids <- DBI::dbGetQuery(con, "
