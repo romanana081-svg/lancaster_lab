@@ -9,6 +9,41 @@ ones the extractor already runs), so it is cheap — but confirm the billing pro
 
 ---
 
+## Setup — do this FIRST on a fresh Workbench instance
+
+A new instance starts with an empty home directory (nothing persists across instances except the
+workspace bucket), so clone the repo and install the two extra R packages before anything else.
+
+**A. Clone the repo** — open a **Terminal** in the Workbench and run:
+
+```bash
+cd ~
+git clone https://github.com/romanana081-svg/lancaster_lab.git
+cd lancaster_lab
+```
+
+If the clone fails with an auth prompt, the repo is private on this instance — either make it public
+briefly (H-006 / Q-R1 — the courtesy call to Megan first), or clone over HTTPS with a GitHub personal
+access token: `git clone https://<TOKEN>@github.com/romanana081-svg/lancaster_lab.git`.
+
+**B. Install the R packages** the figures need (in an **R** console / notebook — not the Terminal):
+
+```r
+# bigrquery, dplyr, DBI, ggplot2 are usually already in the Workbench image. Install what's missing:
+for (pkg in c("ggplot2", "remotes"))
+  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
+
+# The official AHA PREVENT package (needed ONLY for the risk figure 05; the other 5 figures do not
+# need it). Not on CRAN:
+if (!requireNamespace("AHAprevent", quietly = TRUE))
+  remotes::install_github("AHA-DS-Analytics/PREVENT")
+```
+
+Disk is tight on a fresh instance — if `install_github` runs out of space, you can skip AHAprevent and
+still get figures 01–04 and 06 (demographics + missingness); only the risk histogram (05) needs it.
+
+---
+
 ## 0. One-time per session — be at the repo root and confirm the env reached R
 
 ```r
