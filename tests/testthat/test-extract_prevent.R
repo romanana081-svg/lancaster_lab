@@ -27,9 +27,42 @@ test_that("the clean baseline participant (1000028) extracts exactly the known i
     expect_equal(r$hdl_c, 52)
     expect_equal(r$bmi, 27.5)
     expect_equal(r$egfr, 99.6, tolerance = 0.1)   # creatinine 0.9, male, 57y
-    expect_true(r$dm)                  # E11.9
+    # dm is the ADVISOR definition (HbA1c>=6.8 AND >=1 diabetes med), NOT the ICD code. 1000028 has an
+    # E11.9 code AND a diabetes med but NO HbA1c, so under the new definition it is NOT diabetic.
+    expect_false(r$dm)
     expect_false(r$statin)             # no statin exposure
     expect_true(r$complete_panel)
+  })
+})
+
+test_that("diabetes = HbA1c >= 6.8 AND a diabetes med -- both limbs required (advisor 2026-07-21)", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    p <- extract_prevent_panel(con)
+    # Truth table across the fixture:
+    #   1000028: ICD code + diabetes med, but NO HbA1c        -> FALSE (med limb only)
+    #   1000030: HbA1c 8.0 (>=6.8), but NO diabetes med       -> FALSE (A1c limb only)
+    #   1000032: HbA1c 7.2 (>=6.8) AND a diabetes med         -> TRUE  (both limbs)
+    expect_false(p$dm[p$person_id == 1000028])
+    expect_false(p$dm[p$person_id == 1000030])
+    expect_true (p$dm[p$person_id == 1000032])
+    # The most-recent HbA1c is surfaced on the panel for QC / the extended model.
+    expect_equal(p$a1c[p$person_id == 1000030], 8.0)
+    expect_equal(p$a1c[p$person_id == 1000032], 7.2)
+    # A person with no HbA1c row has NA a1c (never a fabricated value) and so is not diabetic.
+    expect_true(is.na(p$a1c[p$person_id == 1000028]))
+  })
+})
+
+test_that("non-male/female sex is EXCLUDED from the panel entirely (advisor 2026-07-21)", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    p <- extract_prevent_panel(con)
+    # 1000308 has a COMPLETE five-input panel but sex_at_birth 'PMI: Skip'. sql/02 counts it; the
+    # extractor must drop it -- PREVENT and CKD-EPI are sex-specific. It must not appear at all.
+    expect_false(1000308 %in% p$person_id)
+    # And no surviving row may carry an NA sex (the drop is total, not a lingering NA).
+    expect_true(all(p$sex %in% c("female", "male")))
   })
 })
 
@@ -59,8 +92,10 @@ test_that("the complete-panel count matches the genomic-free cohort (4)", {
   skip_if_no_fixture()
   with_fixture(function(con) {
     p <- extract_prevent_panel(con)
-    # 1000028, 1000030, 1000032, 1000034 have all five inputs, EHR, age 30-79. 1000029 (no
-    # creatinine), 1000031 (creatinine NULL), 1000033 (age 84) do not qualify. Same 4 as sql/02.
+    # 1000028, 1000030, 1000032, 1000034 have all five inputs, EHR, age 30-79, and a usable sex.
+    # 1000029 (no creatinine), 1000031 (creatinine NULL), 1000033 (age 84) do not qualify. 1000308 has
+    # a complete panel but non-binary sex, so the extractor excludes it -- hence the extractor's 4 is
+    # BELOW sql/02's 5, exactly the sex gap. Same 4 complete panels the extractor can score.
     expect_equal(sum(p$complete_panel), 4)
     expect_setequal(p$person_id[p$complete_panel], c(1000028, 1000030, 1000032, 1000034))
   })
@@ -86,6 +121,6 @@ test_that("the output columns are exactly what the PREVENT equation consumes", {
   with_fixture(function(con) {
     p <- extract_prevent_panel(con)
     expect_true(all(c("age", "sex", "sbp", "bp_tx", "total_c", "hdl_c",
-                      "statin", "dm", "smoking", "egfr", "bmi") %in% names(p)))
+                      "statin", "dm", "a1c", "smoking", "egfr", "bmi") %in% names(p)))
   })
 })

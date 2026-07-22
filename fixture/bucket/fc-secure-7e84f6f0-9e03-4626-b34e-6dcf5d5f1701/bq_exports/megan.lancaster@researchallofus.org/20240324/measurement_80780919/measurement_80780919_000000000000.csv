@@ -55,3 +55,4 @@ person_id,measurement_concept_id,standard_concept_name,standard_concept_code,sta
 1000143,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,2013-08-18 00:00:00,32817,EHR,,,22.9,,,9531,kilogram per square meter,,,,,3038553,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,kg/m2,
 1000142,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,2020-01-02 00:00:00,32817,EHR,,,32.0,,,9531,kilogram per square meter,,,,,3038553,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,kg/m^2,
 1000140,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,2011-02-18 00:00:00,32817,EHR,,,26.3,,,9531,kilogram per square meter,,,,,3038553,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,"",
+1000139,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,2015-06-11 00:00:00,32817,EHR,,,31.3,,,9531,kilogram per square meter,,,,,3038553,3038553,Body mass index (BMI) [Ratio],39156-5,LOINC,kg/m2,

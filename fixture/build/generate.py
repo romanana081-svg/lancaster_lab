@@ -95,10 +95,19 @@ DM_STD = 201826                              # SNOMED "Type 2 diabetes mellitus"
 # to find rows -- it is not a clinical definition and must not be treated as one.
 ANTIHTN = [1308216, 974166]   # lisinopril, hydrochlorothiazide (RxNorm ingredients)
 
-# Current smoking is SURVEY-derived in All of Us (prevent_concepts.yaml: NEEDS_MAPPING).
-# Seeded in ds_survey under its own question_concept_id so it does NOT leak into the
+# Glucose-lowering (diabetes) medication ingredient. Used by the ADVISOR diabetes definition
+# (2026-07-21): dm := most-recent HbA1c >= 6.8% AND >= 1 diabetes med. metformin (1503297) is in
+# extract_prevent.R's .DM_MED_INGREDIENTS, so the default extractor finds it with no parameterisation
+# (same contract as the statin ingredients). The real-CDR list is PROVISIONAL -- see sql/05.
+DM_MED = [1503297]            # metformin (RxNorm ingredient)
+
+# Current smoking is SURVEY-derived in All of Us. The Workbench discovery run (sql/03, 2026-07-21)
+# CONFIRMED the clean current-smoking question is 1585860 "Smoking: Smoke Frequency" (current = Every
+# Day 1585863 / Some Days 1585861; Not at all 1585862 = former). The answer_concept_id map is still
+# provisional, so extract_smoking.R keeps its PROVISIONAL stamp -- but the QUESTION is now pinned, and
+# the fixture uses it. Seeded under its own question_concept_id so it does NOT leak into the
 # cholesterol-med survey export (that query filters question_concept_id = 43528793).
-SMOKING_Q = 1585857
+SMOKING_Q = 1585860
 
 RACES = {
     8527: "White",
@@ -269,6 +278,19 @@ def seed_vocabulary():
         cb_anc.append((c, clinical))
         con_anc.append((c, c, 0, 0))          # OMOP concept_ancestor: ingredient is its own ancestor
         con_anc.append((c, clinical, 1, 1))   # ...and ancestor of the clinical drug beneath it
+
+    # Glucose-lowering (diabetes) ingredients. Same ingredient -> clinical-drug rollup as above; these
+    # ARE part of the extractor's diabetes definition (advisor 2026-07-21), unlike the illustrative
+    # antihypertensives. The real-CDR ingredient set is still PROVISIONAL (sql/05).
+    for c in DM_MED:
+        add_concept(c, f"Glucose-lowering ingredient {c}", "Drug", "RxNorm", "Ingredient", "S", str(c))
+        add_criteria(c, f"Glucose-lowering ingredient {c}", "DRUG", "RXNORM", 1)
+        clinical = 40000000 + c % 1000000
+        add_concept(clinical, f"Clinical drug for ingredient {c}", "Drug", "RxNorm", "Clinical Drug", "S", str(clinical))
+        cb_anc.append((c, c))
+        cb_anc.append((c, clinical))
+        con_anc.append((c, c, 0, 0))
+        con_anc.append((c, clinical, 1, 1))
 
     # Smoking survey question.
     add_concept(SMOKING_Q, "Smoking status", "Observation", "PPI", "Question", "S", "smoking_status")
@@ -629,13 +651,17 @@ def build_prevent_scenarios():
     add_meas(1000028, PD, BMI_C, 27.5, unit="kg/m2", unit_cid=UNIT_KGM2)
     add_cond(1000028, "2018-01-01", DM_ICD_T2, DM_STD, "E11.9")
     add_drug(1000028, "2017-01-01", ANTIHTN[0])
+    add_drug(1000028, "2017-01-01", DM_MED[0])                          # diabetes med, but NO HbA1c
     add_smoking(1000028, "2020-01-01", "Current Every Day")
-    expect(1000028, "complete PREVENT panel, clean -- INCLUDED (D-013)",
+    # DM TRUTH TABLE (advisor def 2026-07-21): 1000028 has an ICD diabetes code AND a diabetes med, but
+    # NO HbA1c -> dm_prevent=0. Proves the new definition needs BOTH limbs: the old code-only path and a
+    # med alone no longer make someone diabetic.
+    expect(1000028, "complete PREVENT panel, clean -- INCLUDED (D-013); DM med + code but no HbA1c -> not dm",
            CAD_code=0, CAD_code_date=None, LDL=52, Date_LDL_assessment=PD, BMI=27.5,
            any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
            has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
            has_bmi=1, has_diabetes_dx=1, has_hba1c=0, has_smoking=1, has_antihypertensive=1,
-           complete_prevent_panel=1)
+           dm_prevent=0, complete_prevent_panel=1)
 
     # P29 missing serum creatinine -> INCOMPLETE, EXCLUDED by D-013. The eligibility
     # rule needs a test as much as the cleaning does: this person has four of five inputs.
@@ -663,11 +689,14 @@ def build_prevent_scenarios():
     add_meas(1000030, PD, SBP, 134.0, unit="mmHg", unit_cid=UNIT_MMHG)              # same-day duplicate
     add_meas(1000030, PD, CREAT, 1.1)
     add_meas(1000030, PD, BMI_C, 26.4, unit="kg/m2", unit_cid=UNIT_KGM2)
-    expect(1000030, "complete panel, SBP dirty (out-of-range / wrong-unit / same-day dup)",
+    add_meas(1000030, PD, HBA1C1, 8.0, unit="%", unit_cid=UNIT_PERCENT)  # HbA1c>=6.8 but NO diabetes med
+    # DM TRUTH TABLE: HbA1c 8.0% (>=6.8) but no diabetes medication -> dm_prevent=0. The A1c limb alone
+    # is not enough either.
+    expect(1000030, "complete panel, SBP dirty (out-of-range / wrong-unit / same-day dup); HbA1c high, no med -> not dm",
            CAD_code=0, CAD_code_date=None, LDL=60, Date_LDL_assessment=PD, BMI=26.4,
            any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
            has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
-           has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=1,
+           has_bmi=1, has_diabetes_dx=0, has_hba1c=1, dm_prevent=0, complete_prevent_panel=1,
            note="SBP has out-of-range 900 + wrong-unit + same-day dup; extractor must bound it")
 
     # P31 creatinine present but ONLY as a censored row (value_as_number NULL,
@@ -700,12 +729,16 @@ def build_prevent_scenarios():
     add_meas(1000032, PD, HBA1C1, 7.2, unit="%", unit_cid=UNIT_PERCENT)
     add_smoking(1000032, "2020-01-01", "Never")
     add_drug(1000032, "2016-01-01", ANTIHTN[1])
-    expect(1000032, "complete panel; HbA1c 7.2% but no diabetes code (definitions diverge)",
+    add_drug(1000032, "2016-01-01", DM_MED[0])                          # HbA1c 7.2 AND a diabetes med
+    # DM TRUTH TABLE: HbA1c 7.2% (>=6.8) AND a diabetes medication -> dm_prevent=1. The ONE positive
+    # case under the advisor definition. Note has_diabetes_dx=0 (no ICD code): the code and the new
+    # definition still identify different people, which is exactly the point.
+    expect(1000032, "complete panel; HbA1c 7.2% + diabetes med -> dm TRUE (no ICD code; definitions diverge)",
            CAD_code=0, CAD_code_date=None, LDL=45, Date_LDL_assessment=PD, BMI=33.3,
            any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
            has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
            has_bmi=1, has_diabetes_dx=0, has_hba1c=1, has_smoking=1, has_antihypertensive=1,
-           complete_prevent_panel=1)
+           dm_prevent=1, complete_prevent_panel=1)
 
     # P33 complete panel but AGE 84 (dob 1938) -> outside PREVENT's validated 30-79 range
     # (Q-S7). The age gate must EXCLUDE it from both the eligible count and the complete
@@ -738,6 +771,24 @@ def build_prevent_scenarios():
            CAD_censored_date="absent",
            has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
            has_bmi=1, has_diabetes_dx=0, complete_prevent_panel=1)
+
+    # P1000308 (id ABOVE the filler range so filler RNG/counts are untouched): a COMPLETE five-input
+    # panel but sex_at_birth = "PMI: Skip" (neither male nor female). The ADVISOR DECISION (2026-07-21)
+    # is to EXCLUDE these participants: PREVENT and CKD-EPI 2021 are sex-specific, so they cannot be
+    # scored. sql/02 (a completeness feasibility count, no sex gate) DOES count it -> the SQL panel is
+    # larger than the scorable extractor panel by exactly the non-binary-sex people, which is the real
+    # ~3,942-person gap noted in meeting.md. extract_prevent.R drops it; the extractor test pins that.
+    add_person(1000308, dob="1966-06-15", sex=903096); add_visits(1000308, STD_VISITS)
+    add_meas(1000308, PD, CHOL_EXCLUDED, 188.0)
+    add_meas(1000308, PD, STRAY, 50.0)                                  # -> LDL=50 (A9)
+    add_meas(1000308, PD, SBP, 124.0, unit="mmHg", unit_cid=UNIT_MMHG)
+    add_meas(1000308, PD, CREAT, 0.9)
+    add_meas(1000308, PD, BMI_C, 26.3, unit="kg/m2", unit_cid=UNIT_KGM2)
+    expect(1000308, "complete panel but sex is neither male/female -- EXCLUDED by the extractor (sex-specific)",
+           CAD_code=0, CAD_code_date=None, LDL=50, Date_LDL_assessment=PD, BMI=26.3,
+           any_chol_med=0, LDL_measured_on_meds="NA", censor_type=1, CAD_censored_date=LAST_VISIT,
+           has_total_cholesterol=1, has_hdl_c=1, has_systolic_bp=1, has_serum_creatinine=1,
+           has_bmi=1, has_diabetes_dx=0, dm_prevent=0, complete_prevent_panel="sex-excluded")
 
 
 # --------------------------------------------------------------------------
@@ -964,6 +1015,9 @@ def main():
             # Validated by tests/testthat/test-prevent-panel-sql.R, not by verify.py.
             "has_total_cholesterol", "has_hdl_c", "has_systolic_bp", "has_serum_creatinine",
             "has_bmi", "has_diabetes_dx", "has_hba1c", "has_smoking", "has_antihypertensive",
+            # dm_prevent: the ADVISOR diabetes definition (HbA1c>=6.8 AND >=1 diabetes med). Distinct
+            # from has_diabetes_dx (ICD code). Validated by tests/testthat/test-extract_prevent.R.
+            "dm_prevent",
             "complete_prevent_panel", "note"]
     out = FIX / "expected" / "answer_key.csv"
     out.parent.mkdir(parents=True, exist_ok=True)

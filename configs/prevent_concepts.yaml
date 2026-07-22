@@ -53,13 +53,33 @@ measurements:                      # -> measurement, via LOINC
 
 conditions:                        # -> condition_occurrence.condition_source_concept_id, via ICD10CM
   diabetes:
-    icd10_prefix: ["E08", "E09", "E10", "E11", "E13"]
-    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; still VERIFY against real CDR
-    note: "Diabetes can be ascertained three ways -- a diagnosis code, HbA1c >= 6.5%, or a glucose-
-           lowering drug -- and they do NOT identify the same people. Which definition we use changes
-           both the cohort and a PREVENT input. Pick one, write it down, and be consistent."
+    # ADVISOR DEFINITION (2026-07-21): diabetes := most-recent HbA1c >= 6.8% AND >= 1 glucose-lowering
+    # medication. BOTH limbs required. This is what extract_prevent.R implements (dm column). The old
+    # ICD10CM diagnosis-code path is retained below only for the discovery/completeness SQL and the
+    # has_diabetes_dx audit column -- it is NO LONGER the phenotype definition.
+    definition: "hba1c_ge_6.8_AND_glucose_lowering_med"
+    hba1c_threshold: 6.8           # advisor's operational cut (NB: ADA clinical cut is 6.5%)
+    requires_medication: true
+    icd10_prefix: ["E08", "E09", "E10", "E11", "E13"]   # audit-only (has_diabetes_dx), not the definition
+    status: IN_FIXTURE   # T-004 (2026-07-20): seeded; definition set 2026-07-22; VERIFY med list (sql/05)
+    note: "The three ascertainments (diagnosis code, HbA1c, glucose-lowering drug) identify DIFFERENT
+           people. The advisor chose HbA1c>=6.8 AND a med (the intersection of two of them). NB the
+           medication INGREDIENT list is PROVISIONAL until confirmed against the AoU drug hierarchy --
+           see drugs.diabetes_medication below and sql/05_diabetes_med_discovery.sql. Until then the
+           dm flag is stamped in the panel's placeholder_inputs."
 
 drugs:                             # -> drug_exposure, via RxNorm
+  diabetes_medication:
+    # The medication limb of the advisor diabetes definition. Matched to glucose-lowering INGREDIENTS
+    # via concept_ancestor (same mechanism as statins). PROVISIONAL: the ingredient set hardcoded in
+    # extract_prevent.R (.DM_MED_INGREDIENTS, anchored on metformin 1503297) MUST be confirmed against
+    # the AoU drug hierarchy before dm is trusted -- run sql/05_diabetes_med_discovery.sql and reconcile.
+    rxnorm_ingredients: [1503297]  # metformin (anchor); full class in extract_prevent.R, all PROVISIONAL
+    classes: ["biguanide", "sulfonylurea", "insulin", "DPP-4", "SGLT2", "GLP-1", "TZD", "meglitinide"]
+    status: PROVISIONAL            # confirm via sql/05 before flipping to VERIFIED
+    note: "metformin is used for other indications (PCOS, prediabetes), so the med limb alone over-calls
+           diabetes -- which is exactly why the definition ALSO requires HbA1c>=6.8. Confirm the full
+           ingredient set against the AoU hierarchy (sql/05); do not treat the starter list as final."
   antihypertensive:
     rxnorm_ingredients: []         # DELIBERATELY EMPTY -- see note
     status: NEEDS_A_CODE_LIST
@@ -74,7 +94,11 @@ drugs:                             # -> drug_exposure, via RxNorm
 
 surveys:                           # -> ds_survey / observation
   current_smoking:
-    status: NEEDS_MAPPING
+    question_concept_id: 1585860   # "Smoking: Smoke Frequency" -- CONFIRMED by sql/03 (2026-07-21)
+    answer_map_provisional:        # provisional until the answer_concept_ids are frozen in the meeting
+      current: [1585863, 1585861]  # Every Day / Some Days
+      former:  [1585862]           # Not at all (with 100-cigs-lifetime = Yes)
+    status: ANSWERS_PROVISIONAL    # question pinned; answer coding not yet frozen (was NEEDS_MAPPING)
     note: "Smoking in All of Us is primarily SURVEY-derived (The Basics / Lifestyle), not EHR-derived.
            That matters for completeness: a participant with a rich EHR but no completed survey has NO
            smoking status and is therefore EXCLUDED under complete-case (D-013). This may be the

@@ -32,6 +32,7 @@ person_id,date_of_birth,race,sex_at_birth
 1000031,1972-06-15 00:00:00,White,Male
 1000032,1961-06-15 00:00:00,White,Male
 1000033,1938-06-15 00:00:00,White,Male
+1000308,1966-06-15 00:00:00,White,PMI: Skip
 1000035,1950-06-15 00:00:00,Middle Eastern or North African,Female
 1000036,1973-06-15 00:00:00,Black or African American,Male
 1000038,1953-06-15 00:00:00,Asian,Male

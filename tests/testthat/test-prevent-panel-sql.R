@@ -67,22 +67,25 @@ test_that("with the PREVENT domains seeded (T-004), the query counts a complete 
     # offline -- which is the whole point: the fixture can finally test the thing this week is about.
     #
     # The counts are DETERMINISTIC, not random: only the hand-authored PREVENT scenario participants
-    # (1000028-1000034) carry SBP or creatinine, so nothing in the randomised filler can perturb
-    # these. The cohort is now genomic-free (has_ehr_data, not srWGS), so 1000034 (wgs=0 but EHR +
-    # complete) counts. Complete panels: 1000028, 1000030, 1000032, 1000034. 1000029 (no creatinine)
-    # and 1000031 (creatinine NULL-value only) are incomplete; 1000033 (age_at_cdr 84) is age-gated.
-    expect_equal(d$n_systolic_bp, 6)         # 1000028,29,30,31,32,34
-    expect_equal(d$n_serum_creatinine, 4)    # 1000028,30,32,34  (31's creatinine is NULL-valued)
-    expect_equal(d$n_complete_panel_PARTIAL, 4)
+    # (1000028-1000034, 1000308) carry SBP or creatinine, so nothing in the randomised filler can
+    # perturb these. The cohort is now genomic-free (has_ehr_data, not srWGS), so 1000034 (wgs=0 but
+    # EHR + complete) counts. Complete panels: 1000028, 1000030, 1000032, 1000034, 1000308. 1000029
+    # (no creatinine) and 1000031 (creatinine NULL-value only) are incomplete; 1000033 (age_at_cdr 84)
+    # is age-gated. NOTE 1000308 has a complete panel but non-binary sex: sql/02 is a completeness
+    # count with NO sex gate, so it counts here -- the extractor (test-extract_prevent.R) is what drops
+    # it. That divergence is the ~3,942-person sex gap in meeting.md, pinned as a test.
+    expect_equal(d$n_systolic_bp, 7)         # 1000028,29,30,31,32,34,308
+    expect_equal(d$n_serum_creatinine, 5)    # 1000028,30,32,34,308  (31's creatinine is NULL-valued)
+    expect_equal(d$n_complete_panel_PARTIAL, 5)
 
     # The NULL-value guard is load-bearing: 1000031 has a creatinine ROW but no numeric value, and
-    # it must not be counted (cf. defect A2). If this rises to 5, the `value_as_number IS NOT NULL`
+    # it must not be counted (cf. defect A2). If this rises to 6, the `value_as_number IS NOT NULL`
     # filter has been dropped.
-    expect_true(d$n_serum_creatinine < 5)
+    expect_true(d$n_serum_creatinine < 6)
 
     # The age gate is pinned here too: 1000033 has a complete panel but age_at_cdr 84, so the count
-    # is 4 not 5. If it reads 5, the 30-79 gate stopped working.
-    expect_equal(d$n_complete_panel_PARTIAL, 4)
+    # is 5 not 6. If it reads 6, the 30-79 gate stopped working.
+    expect_equal(d$n_complete_panel_PARTIAL, 5)
 
     # Diabetes-by-code counts only 1000028 (E11.9). 1000032's diabetic-range HbA1c is deliberately
     # NOT a diagnosis code -- the two definitions diverge (prevent_concepts.yaml).

@@ -24,6 +24,33 @@ Context that frames all of it:
 
 ---
 
+## Decisions FROM the 2026-07-21 meeting (advisor answers — now implemented)
+
+These close several §4 questions. All are wired into `extract_prevent.R` + fixture + tests (green) as
+of 2026-07-22:
+
+1. **Diabetes := most-recent HbA1c ≥ 6.8% AND ≥ 1 glucose-lowering medication.** BOTH limbs required.
+   Replaces the old ICD10CM E08–E13 diagnosis-code definition (that code is now audit-only,
+   `has_diabetes_dx`). NB the **6.8%** cut is the advisor's, not the ADA's 6.5%. The medication
+   ingredient set is **PROVISIONAL** until confirmed against the AoU drug hierarchy —
+   `sql/05_diabetes_med_discovery.sql` + `configs/prevent_concepts.yaml: drugs.diabetes_medication`.
+   (Closes §4 Q#3.)
+2. **Missing sex → EXCLUDE.** Participants whose `sex_at_birth` is neither male nor female are dropped
+   from the panel (PREVENT + CKD-EPI are sex-specific). Explicit drop, not a silent NA. sql/02 (a
+   completeness count with no sex gate) still counts them, so the SQL panel is larger than the scorable
+   extractor panel by exactly these people — the ~3,942 gap. (Closes §4 Q#4.)
+3. **Baseline (base) model first**, extended (HbA1c/UACR/SDI) as a later experiment to see if it moves
+   anything. So the required-input list is the base set; HbA1c is used only to DEFINE diabetes, not as
+   its own required PREVENT input. (Closes §4 Q#2 / H-002.)
+4. **No age-60 cutoff, and do not cut off younger.** Confirmed: the 10-yr model is 30–79 with no 60
+   boundary; only the 30-yr horizon is restricted to 30–59. (Closes §4 Q#6 — see the reworded item.)
+
+Still OPEN and unblocked-by-nobody-but-the-advisor: **Q-S6 baseline anchor** (§4 Q#1) and the
+**antihypertensive list** (§4 Q#5). Smoking: the QUESTION is confirmed (1585860); the answer-coding map
+is still provisional.
+
+---
+
 ## §1 — Run the extractor in the Workbench
 
 **REAL RUN, 2026-07-21 (bring these numbers):**
@@ -232,8 +259,15 @@ deferral is a real scientific choice, not a free one — **the advisor must pick
 5. **Antihypertensive list (bp_tx, NEEDS_A_CODE_LIST).** It's a PREVENT input, currently FALSE for
    everyone. Does the advisor have an authoritative RxNorm ingredient set, or approve pulling the class
    (ACE/ARB/thiazide/CCB/β-blocker…) from `cb_criteria`? A partial list silently misclassifies.
-6. **30-year horizon age range.** AHAprevent returns NA for 30yr at age ≥ 60 (window defined 30–59);
-   `preventr` extrapolates. We report 30yr only for 30–59 (primary is 10yr). Confirm that's intended.
+6. **30-year horizon age range (NOT a general age-60 cutoff — corrected 2026-07-22).** PREVENT's
+   **10-year** risk is defined for the **full 30–79 range**; there is **no age-60 cutoff in the primary
+   (10-yr) model**, and nobody 30–79 is excluded by age. The `NA`-at-60 only ever touched the
+   **30-year** equation, which PREVENT fits only for ages **30–59** (a 30-yr horizon from age 60 runs
+   past the model's 79 ceiling). `AHAprevent` returns `NA` there; `preventr` extrapolates. We use
+   `AHAprevent` (official) and our primary horizon is 10-yr, so this touches no primary result. Confirm
+   we only ever report a 30-yr number for 30–59. (Advisor pushed on this 2026-07-21 — confirmed: no
+   general 60 cutoff, and PREVENT deliberately extends the *lower* bound down to 30, so we do not cut
+   off younger participants either.)
 
 ## §5 — Blockers to raise (handoff.md — only a human can unblock)
 

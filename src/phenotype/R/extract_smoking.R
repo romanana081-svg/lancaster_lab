@@ -1,11 +1,13 @@
 # extract_smoking.R — derive current_smoking (a PREVENT input) from the survey. T-003.
 #
-# STATUS: PROVISIONAL MAPPING. prevent_concepts.yaml marks current_smoking NEEDS_MAPPING and forbids
-# improvising the answer set from memory. The authoritative mapping must come from
-# sql/03_smoking_survey_discovery.sql run against the real CDR. Until then this uses a transparent,
-# reviewable default classifier and stamps every row `smoking_mapping = "PROVISIONAL"`, so a risk score
-# built on it can never be mistaken for final. This mirrors the bp_tx/smoking placeholders in
-# extract_prevent.R — here smoking becomes *derivable* rather than hard-FALSE, but still provisional.
+# STATUS: QUESTION CONFIRMED, ANSWER MAP PROVISIONAL. sql/03 run in the Workbench (2026-07-21)
+# CONFIRMED the current-smoking question is 1585860 "Smoking: Smoke Frequency" -- so the extractor now
+# DEFAULTS to it (no more broad `%smok%` over-pull). What remains provisional is the answer_concept_id
+# -> current/former/never MAP: until the exact answer set is pinned (Every Day 1585863 / Some Days
+# 1585861 = current; Not at all 1585862 = former), every row is stamped `smoking_mapping = "PROVISIONAL"`
+# via a transparent, reviewable text classifier, so a risk score built on it can never be mistaken for
+# final. This mirrors the bp_tx placeholder in extract_prevent.R: smoking is *derivable* from a
+# confirmed question, but the final answer coding is not yet frozen.
 #
 # BASELINE: most-recent survey answer per person (the same Q-S6 placeholder anchor the measurement
 # extractor uses; see extract_prevent.R). Applied symmetrically to everyone. No earliest-value anchor.
@@ -36,13 +38,16 @@ is_current_smoker_default <- function(answer) {
 #' Extract current_smoking per person from the survey table.
 #'
 #' @param con an open DBI connection (BigQuery in the Workbench, the DuckDB fixture offline).
-#' @param question_concept_ids optional integer vector to restrict to specific smoking questions
-#'   (the ones sql/03 confirms). NULL (default) = any survey question whose text matches smoking.
+#' @param question_concept_ids integer vector restricting to specific smoking questions. DEFAULT
+#'   1585860L ("Smoking: Smoke Frequency"), the question sql/03 CONFIRMED on 2026-07-21 as the clean
+#'   current-smoking item. Pass NULL to fall back to the broad text match (any question LIKE '%smok%')
+#'   -- but note that over-pulls e-cig/cigar/hookah/cannabis and billed ~20 GB in the real CDR, so it
+#'   is NOT the default. The answer-to-status MAP is still provisional (hence the classifier below).
 #' @param classifier function(answer) -> logical, the raw-answer -> current-smoker rule. Defaults to
-#'   is_current_smoker_default(); pass your own once the discovery step nails the answer set.
+#'   is_current_smoker_default(); pass your own once the discovery step nails the answer_concept_ids.
 #' @return data.frame(person_id, smoking, smoking_answer, smoking_date, smoking_mapping), one row per
 #'   person, from that person's MOST-RECENT informative smoking answer.
-extract_smoking <- function(con, question_concept_ids = NULL, classifier = is_current_smoker_default) {
+extract_smoking <- function(con, question_concept_ids = 1585860L, classifier = is_current_smoker_default) {
   suppressPackageStartupMessages(library(dplyr))
 
   where_q <- if (is.null(question_concept_ids)) {

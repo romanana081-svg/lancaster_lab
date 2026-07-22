@@ -51,11 +51,21 @@ test_that("end-to-end: extract -> run_prevent gives 1000028 its known risk", {
   if (!file.exists(FIXTURE_DB)) skip("fixture not built")
   if (!requireNamespace("duckdb", quietly = TRUE)) skip("duckdb not installed")
   with_fixture(function(con) {
-    scored <- run_prevent(extract_prevent_panel(con))
-    r <- scored[scored$person_id == 1000028, ]
-    # male 57, TC 190, HDL 52, SBP 128, diabetes, non-smoker, BMI 27.5, eGFR ~99.6, untreated.
-    expect_equal(r$prevent_base_10yr_ASCVD, 6.128193, tolerance = 1e-2)
-    expect_equal(r$prevent_base_30yr_ASCVD, 21.50944, tolerance = 1e-2)
+    panel  <- extract_prevent_panel(con)
+    rr     <- panel[panel$person_id == 1000028, ]
+    scored <- run_prevent(panel)
+    r      <- scored[scored$person_id == 1000028, ]
+    # male 57, TC 190, HDL 52, SBP 128, non-smoker, BMI 27.5, eGFR ~99.6, untreated. NOTE: 1000028 is
+    # NOT diabetic under the advisor definition (it has an E11.9 ICD code + a diabetes med but no
+    # HbA1c), so dm=FALSE. Removing diabetes drops the 10yr ASCVD from ~6.1% to ~3.2%.
+    expect_false(rr$dm)
+    # Compute the reference straight from the official package with the extractor's own values and
+    # dm=0: the end-to-end path must equal a direct prevent_base call. No hardcoded magic number.
+    ref <- AHAprevent::prevent_base(sex = 0, age = rr$age, tc = rr$total_c, hdl = rr$hdl_c,
+                                    sbp = rr$sbp, dm = 0, smoking = 0, bmi = rr$bmi,
+                                    egfr = rr$egfr, bptreat = 0, statin = 0)
+    expect_equal(r$prevent_base_10yr_ASCVD, unname(unlist(ref$prevent_base_10yr_ASCVD)), tolerance = 1e-6)
+    expect_equal(r$prevent_base_30yr_ASCVD, unname(unlist(ref$prevent_base_30yr_ASCVD)), tolerance = 1e-6)
   })
 })
 
