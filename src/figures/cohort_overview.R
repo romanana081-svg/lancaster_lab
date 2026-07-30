@@ -35,19 +35,41 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #' Pull age / sex / race for the scorable cohort and score it, all from one connection.
 #'
 #' @param con open DBI connection (BigQuery in Workbench, DuckDB fixture offline).
+#' @param require_smoking  attach REAL survey smoking and DROP anyone with no answer (default TRUE,
+#'   set 2026-07-30 by the user). Rationale: smoking is a PREVENT input, and D-013 already excludes
+#'   anyone missing any input rather than imputing one -- so requiring it is the consistent reading of
+#'   a decision already made, not a new one. The COST is large and must be stated wherever these
+#'   figures are shown: survey smoking coverage was 39.8% on the 2026-07-21 real run, so the scorable
+#'   panel goes 216,167 -> ~84,176. Set FALSE to reproduce the pre-2026-07-30 figures, in which
+#'   smoking was FALSE for everyone and predicted risk was therefore biased DOWNWARD.
+#'   NB the answer CODING is still provisional (prevent_concepts.yaml: ANSWERS_PROVISIONAL).
 #' @return data.frame with person_id, age, sex, race, and (if AHAprevent present) 10-yr ASCVD risk,
-#'   restricted to the scorable panel; plus an attribute "missingness" (per-input NA counts, all rows).
-build_cohort_frame <- function(con) {
+#'   restricted to the scorable panel; plus an attribute "missingness" (per-input NA counts, all rows)
+#'   and an attribute "cohort_note" describing the smoking rule in force.
+build_cohort_frame <- function(con, require_smoking = TRUE) {
   stopifnot(exists("extract_prevent_panel", mode = "function"))
   panel <- extract_prevent_panel(con)
 
+  # Attach real smoking BEFORE computing missingness, so the missingness figure counts the input we
+  # actually require. Leaving smoking out of that figure while requiring it would understate the
+  # single largest driver of exclusion.
+  if (isTRUE(require_smoking)) {
+    if (!exists("extract_smoking", mode = "function"))
+      stop("build_cohort_frame(): require_smoking = TRUE but extract_smoking.R is not sourced.
+  source('src/phenotype/R/extract_smoking.R') first.", call. = FALSE)
+    panel <- attach_smoking(panel, extract_smoking(con))
+  }
+
   # per-input missingness across EVERYONE in the panel (the attrition story), before restricting.
-  miss <- sapply(c("sbp", "total_c", "hdl_c", "egfr", "bmi", "a1c"),
-                 function(k) sum(is.na(panel[[k]])))
+  inputs <- c("sbp", "total_c", "hdl_c", "egfr", "bmi", "a1c")
+  miss <- sapply(inputs, function(k) sum(is.na(panel[[k]])))
+  if (isTRUE(require_smoking))
+    miss <- c(miss, smoking = sum(!panel$has_smoking_answer))
   miss <- data.frame(input = names(miss), n_missing = as.integer(miss), n_total = nrow(panel))
 
   race <- DBI::dbGetQuery(con, "SELECT person_id, race FROM cb_search_person")
-  scorable <- panel[panel$complete_panel, , drop = FALSE]
+  keep <- if (isTRUE(require_smoking)) panel$complete_panel_smoking else panel$complete_panel
+  scorable <- panel[keep, , drop = FALSE]
   scorable <- dplyr::left_join(scorable, race, by = "person_id")
   scorable$race <- ifelse(is.na(scorable$race) | scorable$race %in%
                             c("None Indicated", "PMI: Skip", "I prefer not to answer"),
@@ -58,6 +80,10 @@ build_cohort_frame <- function(con) {
     scorable <- run_prevent(scorable)
   }
   attr(scorable, "missingness") <- miss
+  attr(scorable, "cohort_note") <- if (isTRUE(require_smoking))
+    sprintf("Smoking REQUIRED: no survey answer = excluded (%s of %s panel members kept).",
+            format(nrow(scorable), big.mark = ","), format(nrow(panel), big.mark = ","))
+  else "Smoking NOT required: placeholder FALSE for everyone -- predicted risk biased DOWNWARD."
   scorable
 }
 
@@ -67,14 +93,17 @@ build_cohort_frame <- function(con) {
 #' @param outdir directory for the PNGs (created if needed).
 #' @param dpi    resolution (150 is crisp on a slide without huge files).
 #' @return (invisibly) the cohort data.frame.
-make_cohort_figures <- function(con, outdir = "figures", dpi = 150) {
+make_cohort_figures <- function(con, outdir = "figures", require_smoking = TRUE, dpi = 150) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-  df   <- build_cohort_frame(con)
+  df   <- build_cohort_frame(con, require_smoking = require_smoking)
   n    <- nrow(df)
   save <- function(name, p, w = 7, h = 4.5)
     ggsave(file.path(outdir, name), p, width = w, height = h, dpi = dpi, bg = "white")
 
-  cap <- function() sprintf("Scorable PREVENT panel (complete inputs, known sex). N = %s", format(n, big.mark = ","))
+  # Every caption carries the smoking rule, because the same figure means a different thing under
+  # each setting and the N alone does not reveal which one produced it.
+  cap <- function() sprintf("Scorable PREVENT panel (complete inputs, known sex). N = %s\n%s",
+                            format(n, big.mark = ","), attr(df, "cohort_note"))
 
   # 1. Age distribution -----------------------------------------------------------------------------
   save("01_age_hist.png",
@@ -130,8 +159,11 @@ make_cohort_figures <- function(con, outdir = "figures", dpi = 150) {
         labs(title = "10-year ASCVD risk (PREVENT base model)",
              subtitle = sprintf("Median %.1f%%", median(rr$prevent_base_10yr_ASCVD)),
              x = "10-year ASCVD risk (%)", y = "Participants",
-             caption = sprintf("Scored participants. N = %s. bp_tx placeholder = slight underestimate.",
-                               format(nrow(rr), big.mark = ","))) +
+             caption = sprintf(paste("Scored participants. N = %s. %s",
+                                     "\nbp_tx is still placeholder FALSE for everyone",
+                                     "(antihypertensive list NEEDS_A_CODE_LIST), which biases",
+                                     "\npredicted risk DOWNWARD."),
+                               format(nrow(rr), big.mark = ","), attr(df, "cohort_note"))) +
         .theme_cohort())
   }
 

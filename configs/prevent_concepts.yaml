@@ -81,16 +81,48 @@ drugs:                             # -> drug_exposure, via RxNorm
            diabetes -- which is exactly why the definition ALSO requires HbA1c>=6.8. Confirm the full
            ingredient set against the AoU hierarchy (sql/05); do not treat the starter list as final."
   antihypertensive:
-    rxnorm_ingredients: []         # DELIBERATELY EMPTY -- see note
-    status: NEEDS_A_CODE_LIST
-    note: "Antihypertensive use is a PREVENT input, and there is no single code for it: it is a large
-           class (ACE inhibitors, ARBs, thiazides, CCBs, beta blockers...). Do NOT improvise this list
-           from memory. Pull the ingredient set from the All of Us drug hierarchy (cb_criteria /
-           concept_ancestor) and record what was pulled. A partial list silently misclassifies treated
-           hypertensives as untreated, which biases a PREVENT input directly.
-           FIXTURE NOTE (T-004): the fixture seeds two ILLUSTRATIVE ingredients (lisinopril,
-           hydrochlorothiazide) on participants 1000028/1000032 so a future extractor has rows to find.
-           That is scaffolding, NOT the authoritative list -- this entry stays NEEDS_A_CODE_LIST."
+    # POPULATED 2026-07-30 (user instruction): use the AHA's published classes of blood-pressure
+    # medication. Source: American Heart Association, "Types of Blood Pressure Medications".
+    #
+    # HOW THIS AVOIDS THE THING THE OLD NOTE WARNED ABOUT. The warning was against improvising a list
+    # of CONCEPT IDs from memory. This entry lists INGREDIENT NAMES instead, which are (a) published
+    # clinical reference material, (b) human-reviewable by the advisor, and (c) stable across CDR
+    # versions -- concept IDs are none of those. The names are resolved to RxNorm ingredient
+    # concept_ids AGAINST THE CDR VOCABULARY AT RUNTIME (resolve_antihypertensive_ingredients() in
+    # extract_prevent.R), and anything that fails to resolve is reported loudly rather than dropped.
+    # Run sql/06_antihypertensive_discovery.sql in the Workbench to see exactly what resolved.
+    #
+    # KNOWN OVER-CAPTURE, STATE IT WHEREVER bp_tx IS USED: several of these classes are prescribed for
+    # indications OTHER than hypertension -- beta blockers for arrhythmia/post-MI/migraine, loop
+    # diuretics for heart failure and oedema, spironolactone for heart failure and cirrhosis, CCBs for
+    # angina. So this measures "on a blood-pressure-lowering drug", NOT "treated for hypertension".
+    # PREVENT's input is the former, so class-based capture is the standard operationalisation -- but
+    # the two are not the same thing and the difference is not small in an older cohort.
+    status: PROVISIONAL_AHA_CLASSES   # was NEEDS_A_CODE_LIST; confirm resolution via sql/06
+    rxnorm_ingredient_names:
+      diuretics_thiazide:      [hydrochlorothiazide, chlorthalidone, indapamide, metolazone]
+      diuretics_loop:          [furosemide, bumetanide, torsemide]
+      diuretics_k_sparing:     [amiloride, triamterene]
+      aldosterone_antagonists: [spironolactone, eplerenone]
+      beta_blockers:           [atenolol, metoprolol, propranolol, nadolol, bisoprolol, nebivolol,
+                                betaxolol, acebutolol, pindolol, timolol]
+      alpha_beta_blockers:     [carvedilol, labetalol]
+      ace_inhibitors:          [lisinopril, enalapril, ramipril, benazepril, captopril, fosinopril,
+                                quinapril, perindopril, moexipril, trandolapril]
+      arbs:                    [losartan, valsartan, irbesartan, candesartan, olmesartan,
+                                telmisartan, eprosartan, azilsartan]
+      calcium_channel_blockers: [amlodipine, nifedipine, felodipine, nicardipine, isradipine,
+                                nisoldipine, diltiazem, verapamil]
+      alpha_blockers:          [doxazosin, prazosin, terazosin]
+      central_agonists:        [clonidine, methyldopa, guanfacine]
+      vasodilators:            [hydralazine, minoxidil]
+      renin_inhibitors:        [aliskiren]
+    # OFFLINE ONLY. The fixture's vocabulary has no real RxNorm ingredient NAMES (its concepts are
+    # named "Antihypertensive ingredient <id>"), so name resolution finds nothing there. These two IDs
+    # are the fixture's seeded lisinopril + hydrochlorothiazide, used ONLY when name resolution
+    # returns empty, so the extractor is still exercised offline. They are scaffolding, not a
+    # definition, and they must never be used against the real CDR.
+    fixture_ingredient_ids: [1308216, 974166]
 
 surveys:                           # -> ds_survey / observation
   current_smoking:

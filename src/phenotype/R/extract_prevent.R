@@ -15,10 +15,18 @@
 #               PROVISIONAL on the real CDR: the glucose-lowering INGREDIENT set (.DM_MED_INGREDIENTS)
 #               must be confirmed against the AoU drug hierarchy the same way statins were audited --
 #               until then dm is stamped in `placeholder_inputs`. Fully exercised on the fixture.
-#   PLACEHOLDER: bp_tx (antihypertensive) and smoking are FALSE for everyone. Both are deliberately
-#               undefined in configs/prevent_concepts.yaml (NEEDS_A_CODE_LIST / NEEDS_MAPPING) -- do
-#               NOT read a risk score as final until these two are mapped. `placeholder_inputs`
-#               marks every row so the approximation can never pass silently.
+#   bp_tx (UPDATED 2026-07-30): no longer a placeholder. Driven by the AHA's published classes of
+#               blood-pressure medication (configs/prevent_concepts.yaml: drugs.antihypertensive),
+#               listed BY INGREDIENT NAME and resolved against the CDR vocabulary at runtime, then
+#               expanded ingredient -> clinical drug via concept_ancestor. Status
+#               PROVISIONAL_AHA_CLASSES until sql/06_antihypertensive_discovery.sql confirms what
+#               resolved. NOTE it measures "on a BP-lowering drug", not "treated for hypertension":
+#               beta blockers, loop diuretics and CCBs are also given for arrhythmia, heart failure
+#               and angina. That over-capture is inherent to the PREVENT input, not a bug.
+#   PLACEHOLDER: smoking is FALSE for everyone as returned by THIS function -- it is survey-derived
+#               and attached separately by attach_smoking() (extract_smoking.R). Callers that need a
+#               final risk score must attach it; `placeholder_inputs` marks every row so the
+#               approximation can never pass silently.
 #
 # SEX (ADVISOR DECISION, 2026-07-21): participants whose sex_at_birth is neither male nor female are
 # EXCLUDED from the panel entirely (PREVENT and CKD-EPI 2021 are both sex-specific, so they cannot be
@@ -67,6 +75,70 @@ if (!exists("egfr_ckd_epi_2021", mode = "function")) {
 # HbA1c threshold for the diabetes definition (advisor 2026-07-21). NB: the ADA clinical cut is 6.5%;
 # 6.8% is the advisor's chosen operational threshold for this study. One literal, one place to change.
 .DM_A1C_THRESHOLD <- 6.8
+
+#' Resolve the AHA antihypertensive classes to RxNorm ingredient concept_ids, IN THE CDR.
+#'
+#' bp_tx is a PREVENT input and was a placeholder (FALSE for everyone) until 2026-07-30. It is now
+#' driven by `configs/prevent_concepts.yaml: drugs.antihypertensive`, which lists the AHA's published
+#' classes of blood-pressure medication BY INGREDIENT NAME.
+#'
+#' Names, not IDs, on purpose: an ingredient name is published clinical reference material that the
+#' advisor can review line by line, and it is stable across CDR versions. A concept ID is neither --
+#' and a stale one returns zero rows with no error, which is how a phenotype silently becomes empty.
+#'
+#' @param con    open DBI connection.
+#' @param config_path  path to prevent_concepts.yaml.
+#' @param strict if TRUE, having NOTHING resolve is an error. Set FALSE only offline.
+#' @return list(ingredient_ids, resolved (data.frame name->concept_id), unresolved (character),
+#'              source ("names" | "fixture_ids"))
+resolve_antihypertensive_ingredients <- function(con, config_path = "configs/prevent_concepts.yaml",
+                                                strict = TRUE) {
+  if (!file.exists(config_path)) {
+    alt <- file.path("..", "..", config_path)
+    if (file.exists(alt)) config_path <- alt else
+      stop(sprintf("resolve_antihypertensive_ingredients(): cannot find %s", config_path), call. = FALSE)
+  }
+  cfg <- yaml::read_yaml(config_path)$drugs$antihypertensive
+  if (is.null(cfg)) stop("prevent_concepts.yaml has no drugs.antihypertensive block", call. = FALSE)
+
+  names_by_class <- cfg$rxnorm_ingredient_names %||% list()
+  wanted <- unique(tolower(unlist(names_by_class, use.names = FALSE)))
+  if (!length(wanted)) stop("drugs.antihypertensive.rxnorm_ingredient_names is empty", call. = FALSE)
+
+  # Match RxNorm INGREDIENT concepts by exact lowercased name. Restricting to the Ingredient class
+  # matters: without it, "metoprolol succinate 25 MG tablet" (a clinical drug) would match too, and
+  # the concept_ancestor expansion below would then be applied to the wrong level of the hierarchy.
+  quoted <- paste(sprintf("'%s'", gsub("'", "''", wanted)), collapse = ", ")
+  got <- tryCatch(DBI::dbGetQuery(con, sprintf(
+    "SELECT concept_id, LOWER(concept_name) AS nm, concept_class_id
+       FROM concept
+      WHERE vocabulary_id = 'RxNorm'
+        AND LOWER(concept_name) IN (%s)
+        AND (concept_class_id = 'Ingredient' OR concept_class_id IS NULL)", quoted)),
+    error = function(e) data.frame(concept_id = numeric(0), nm = character(0)))
+
+  if (nrow(got) > 0) {
+    return(list(ingredient_ids = unique(as.numeric(got$concept_id)),
+                resolved   = data.frame(name = got$nm, concept_id = as.numeric(got$concept_id)),
+                unresolved = setdiff(wanted, got$nm),
+                source = "names"))
+  }
+
+  # Nothing resolved by name. Offline (the fixture's vocabulary has no real ingredient names) fall
+  # back to the explicitly-labelled scaffolding IDs so the extractor is still exercised. Against the
+  # real CDR this is a hard error: silently scoring bp_tx off two fixture IDs would be far worse than
+  # failing.
+  fb <- as.numeric(cfg$fixture_ingredient_ids %||% numeric(0))
+  if (strict || !length(fb))
+    stop(paste0("resolve_antihypertensive_ingredients(): NONE of the ", length(wanted),
+                " AHA antihypertensive ingredient names resolved in this vocabulary.\n",
+                "  bp_tx would be FALSE for everyone with no error. Run ",
+                "sql/06_antihypertensive_discovery.sql to see what the CDR actually calls them."),
+         call. = FALSE)
+  list(ingredient_ids = fb,
+       resolved   = data.frame(name = "FIXTURE SCAFFOLDING", concept_id = fb),
+       unresolved = wanted, source = "fixture_ids")
+}
 
 
 #' Extract the per-person PREVENT input panel from a CDR connection.
@@ -135,6 +207,21 @@ extract_prevent_panel <- function(con) {
      WHERE ca.ancestor_concept_id IN (%s)",
     paste(.STATIN_INGREDIENTS, collapse = ",")))$person_id
 
+  # --- bp_tx: AHA antihypertensive classes, resolved by ingredient NAME in the CDR ----------------
+  # No longer a placeholder (2026-07-30). Same ingredient->descendant expansion as the statins: a CDR
+  # drug row is a clinical drug ("lisinopril 10 MG tablet"), not the ingredient, and the statin audit
+  # showed the difference is not small (27,320 vs 143,905 users).
+  # `strict = FALSE` so the fixture can exercise this path via its scaffolding IDs; against the real
+  # CDR the resolver still errors loudly if the AHA names find nothing, because a silent all-FALSE
+  # bp_tx is exactly the failure this is replacing.
+  bp_res <- resolve_antihypertensive_ingredients(con, strict = FALSE)
+  bp_tx_ids <- if (length(bp_res$ingredient_ids)) DBI::dbGetQuery(con, sprintf(
+    "SELECT DISTINCT de.person_id
+     FROM drug_exposure de
+     JOIN concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
+     WHERE ca.ancestor_concept_id IN (%s)",
+    paste(format(bp_res$ingredient_ids, scientific = FALSE), collapse = ",")))$person_id else numeric(0)
+
   # --- demographics: age (CDR-computed) + sex, gated to EHR + 30-79 --------------------------------
   demo <- DBI::dbGetQuery(con, "
     SELECT person_id, age_at_cdr AS age, sex_at_birth
@@ -155,13 +242,17 @@ extract_prevent_panel <- function(con) {
       # NA A1c -> FALSE (definition not met, not "unknown"): the AND cannot be satisfied without it.
       dm      = !is.na(a1c) & a1c >= .DM_A1C_THRESHOLD & (person_id %in% dm_med_ids),
       statin  = person_id %in% statin_ids,
-      bp_tx   = FALSE,   # PLACEHOLDER (plan A) -- antihypertensive list undefined
-      smoking = FALSE    # PLACEHOLDER (plan A) -- smoking survey mapping undefined
+      bp_tx   = person_id %in% bp_tx_ids,   # AHA antihypertensive classes (2026-07-30)
+      smoking = FALSE    # PLACEHOLDER -- attach real survey smoking with attach_smoking()
     )
 
   need <- c("age", "sex", "sbp", "total_c", "hdl_c", "egfr", "bmi")
   panel$complete_panel <- stats::complete.cases(panel[, need])
-  panel$placeholder_inputs <- "bp_tx,smoking (plan A); dm med-list PROVISIONAL (sql/05); baseline=most_recent (Q-S6)"
+  panel$placeholder_inputs <- sprintf(
+    "smoking (attach_smoking()); bp_tx=AHA classes via %s%s; dm med-list PROVISIONAL (sql/05); baseline=most_recent (Q-S6)",
+    bp_res$source,
+    if (length(bp_res$unresolved) && bp_res$source == "names")
+      sprintf(" [%d name(s) UNRESOLVED]", length(bp_res$unresolved)) else "")
 
   panel[, c("person_id", "age", "sex", "sbp", "bp_tx", "total_c", "hdl_c",
             "statin", "dm", "a1c", "smoking", "egfr", "bmi",

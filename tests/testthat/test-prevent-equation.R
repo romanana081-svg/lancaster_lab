@@ -55,15 +55,21 @@ test_that("end-to-end: extract -> run_prevent gives 1000028 its known risk", {
     rr     <- panel[panel$person_id == 1000028, ]
     scored <- run_prevent(panel)
     r      <- scored[scored$person_id == 1000028, ]
-    # male 57, TC 190, HDL 52, SBP 128, non-smoker, BMI 27.5, eGFR ~99.6, untreated. NOTE: 1000028 is
+    # male 57, TC 190, HDL 52, SBP 128, non-smoker, BMI 27.5, eGFR ~99.6. NOTE: 1000028 is
     # NOT diabetic under the advisor definition (it has an E11.9 ICD code + a diabetes med but no
     # HbA1c), so dm=FALSE. Removing diabetes drops the 10yr ASCVD from ~6.1% to ~3.2%.
     expect_false(rr$dm)
+    # 1000028 IS on an antihypertensive (the fixture seeds lisinopril). Until 2026-07-30 bp_tx was a
+    # placeholder FALSE and this reference hardcoded bptreat = 0; when bp_tx became real the two
+    # diverged (3.21% -> 3.91%), which is the equation correctly responding to a newly-supplied input.
+    # Read bp_tx from the extractor rather than restoring the hardcoded 0 -- pinning the literal would
+    # re-assert the placeholder and silently undo the fix.
+    expect_true(rr$bp_tx)
     # Compute the reference straight from the official package with the extractor's own values and
     # dm=0: the end-to-end path must equal a direct prevent_base call. No hardcoded magic number.
     ref <- AHAprevent::prevent_base(sex = 0, age = rr$age, tc = rr$total_c, hdl = rr$hdl_c,
                                     sbp = rr$sbp, dm = 0, smoking = 0, bmi = rr$bmi,
-                                    egfr = rr$egfr, bptreat = 0, statin = 0)
+                                    egfr = rr$egfr, bptreat = as.integer(rr$bp_tx), statin = 0)
     expect_equal(r$prevent_base_10yr_ASCVD, unname(unlist(ref$prevent_base_10yr_ASCVD)), tolerance = 1e-6)
     expect_equal(r$prevent_base_30yr_ASCVD, unname(unlist(ref$prevent_base_30yr_ASCVD)), tolerance = 1e-6)
   })

@@ -78,13 +78,26 @@ test_that("dirty SBP is bounded and same-day duplicates averaged (1000030)", {
   })
 })
 
-test_that("bp_tx and smoking are honest placeholders, flagged on every row", {
+test_that("bp_tx is real (AHA classes), and smoking is still an honest placeholder", {
   skip_if_no_fixture()
   with_fixture(function(con) {
     p <- extract_prevent_panel(con)
-    expect_true(all(p$bp_tx == FALSE))
+
+    # FLIPPED 2026-07-30. This assertion used to pin `all(p$bp_tx == FALSE)` -- the placeholder. That
+    # was correct while the antihypertensive list was deliberately empty (NEEDS_A_CODE_LIST); now the
+    # AHA classes drive it, so the OLD assertion failing was the signal that the fix landed. Same
+    # pattern as T-004's flipped GAP assertions.
+    #
+    # The fixture seeds antihypertensives (lisinopril / hydrochlorothiazide) on 1000028 and 1000032
+    # only, so bp_tx must be TRUE for exactly those two and FALSE elsewhere. Asserting the SET, not
+    # merely "some are TRUE": a resolver bug that marked everyone treated would still pass the latter.
+    expect_setequal(p$person_id[p$bp_tx], c(1000028, 1000032))
+
+    # smoking IS still FALSE here by design -- it is survey-derived and attached by attach_smoking().
     expect_true(all(p$smoking == FALSE))
     expect_true(all(nzchar(p$placeholder_inputs)))
+    # ...and the row stamp must now say so, naming how bp_tx was resolved.
+    expect_match(p$placeholder_inputs[1], "bp_tx=AHA classes")
   })
 })
 
