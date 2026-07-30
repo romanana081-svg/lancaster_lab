@@ -28,9 +28,19 @@ numbers without saying so.
 
 ## Step 0 — setup (once per session)
 
+**Pull in the Workbench TERMINAL, not from R.** The repo is private over HTTPS, so git prompts for
+credentials — and a prompt fired from R's `system()` has nowhere to appear, so it just hangs. That is
+what happened to the original clone (JOURNAL 2026-07-20); it looks like "pulling forever" but it is
+blocked on auth.
+
+```bash
+cd ~/lancaster_lab && git pull        # <- Terminal tab, not the R console
+```
+
+Then, in R:
+
 ```r
 setwd("~/lancaster_lab")
-system("git pull")                       # several files below are new
 
 Sys.getenv("WORKSPACE_CDR")              # must be non-empty
 Sys.getenv("GOOGLE_PROJECT")             # must be non-empty
