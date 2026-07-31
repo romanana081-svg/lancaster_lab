@@ -7,10 +7,11 @@
 # WHAT IS CLEAN vs PLACEHOLDER (plan A, 2026-07-20; diabetes redefined 2026-07-22):
 #   clean now : age, sex, sbp, total_c, hdl_c, bmi, egfr (from creatinine, CKD-EPI 2021 race-free),
 #               statin (RxNorm ingredient set)
-#   dm (ADVISOR DEFINITION, 2026-07-21): diabetes := most-recent HbA1c >= 6.8% AND >= 1 glucose-
-#               lowering medication. This REPLACES the old ICD10CM E08-E13 diagnosis-code definition
-#               (the three definitions identify different people -- prevent_concepts.yaml). Note the
-#               6.8% cut is the advisor's, not the ADA's 6.5%. dm is TRUE only when BOTH limbs are
+#   dm (ADVISOR DEFINITION, 2026-07-21; threshold REVISED 2026-07-31): diabetes := most-recent
+#               HbA1c >= 6.5% AND >= 1 glucose-lowering medication. This REPLACES the old ICD10CM
+#               E08-E13 diagnosis-code definition (the three definitions identify different people --
+#               prevent_concepts.yaml). The cut is now the ADA's standard 6.5% (it was 6.8% between
+#               2026-07-21 and 2026-07-31). dm is TRUE only when BOTH limbs are
 #               satisfied; a missing HbA1c or no medication => dm = FALSE (definition not met).
 #               PROVISIONAL on the real CDR: the glucose-lowering INGREDIENT set (.DM_MED_INGREDIENTS)
 #               must be confirmed against the AoU drug hierarchy the same way statins were audited --
@@ -72,9 +73,12 @@ if (!exists("egfr_ckd_epi_2021", mode = "function")) {
 )
 .DM_MED_INGREDIENTS <- unique(.DM_MED_INGREDIENTS)
 
-# HbA1c threshold for the diabetes definition (advisor 2026-07-21). NB: the ADA clinical cut is 6.5%;
-# 6.8% is the advisor's chosen operational threshold for this study. One literal, one place to change.
-.DM_A1C_THRESHOLD <- 6.8
+# HbA1c threshold for the diabetes definition. REVISED 2026-07-31 (advisor): back to the ADA's
+# standard diagnostic cut of 6.5%, from the 6.8% operational cut used 2026-07-21 to 2026-07-31.
+# Lowering it can only ADD people to dm = TRUE (the A1c limb is >=), so any Workbench count of
+# diabetes from before 2026-07-31 is an UNDERCOUNT under the current definition -- do not mix them.
+# One literal, one place to change.
+.DM_A1C_THRESHOLD <- 6.5
 
 #' Resolve the AHA antihypertensive classes to RxNorm ingredient concept_ids, IN THE CDR.
 #'
@@ -144,9 +148,15 @@ resolve_antihypertensive_ingredients <- function(con, config_path = "configs/pre
 #' Extract the per-person PREVENT input panel from a CDR connection.
 #'
 #' @param con an open DBI connection (BigQuery in the Workbench, the DuckDB fixture offline).
+#' @param as_of  optional Date. If given, ONLY measurements on or before this date are considered, so
+#'   the panel is the one a clinician could have had in hand on that day. Required in spirit by the
+#'   30-day rule (D-017): the default most-recent panel can post-date a person's event, and a panel
+#'   measured after the event cannot predate it by 30 days. Pass the landmark here.
 #' @return a data.frame, one row per person (age 30-79, has EHR, >=1 PREVENT measurement), with the
-#'   PREVENT input columns plus `person_id`, a `complete_panel` flag, and `placeholder_inputs`.
-extract_prevent_panel <- function(con) {
+#'   PREVENT input columns plus `person_id`, a `complete_panel` flag, `panel_date`, and
+#'   `placeholder_inputs`. `panel_date` is the date the panel became complete — the LATEST of the
+#'   five required measurement dates — and is NA when the panel is incomplete.
+extract_prevent_panel <- function(con, as_of = NULL) {
   suppressPackageStartupMessages({ library(dplyr); library(tidyr) })
 
   # --- measurements: bound + reduce to ONE most-recent value per person, IN SQL (CDR-scale) -------
@@ -155,13 +165,20 @@ extract_prevent_panel <- function(con) {
   # match the earlier in-R cleaning) also absorb the wild unit inconsistency: an in-range value is
   # kept whatever its unit label, an out-of-scale one (cholesterol in mmol/L ~5; creatinine garbage
   # >20) is dropped. Baseline = most recent (Q-S6 placeholder); same-day ties averaged (D-009).
-  m_long <- DBI::dbGetQuery(con, "
+  # `as_of` filters in SQL, before the most-recent pick -- so "most recent" means most recent AS OF
+  # that date, not most recent overall. Doing it in R afterwards would be wrong as well as slower: the
+  # window function would already have collapsed each person to their latest-ever row.
+  as_of_clause <- if (is.null(as_of)) "" else
+    sprintf("        AND CAST(m.measurement_date AS DATE) <= DATE '%s'\n",
+            format(as.Date(as_of), "%Y-%m-%d"))
+
+  m_long <- DBI::dbGetQuery(con, sprintf("
     WITH bounded AS (
       SELECT m.person_id, c.concept_code AS code, m.value_as_number AS value,
              CAST(m.measurement_date AS DATE) AS dt
       FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
       WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
-        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
+%s        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
            OR (c.concept_code = '2085-9'  AND m.value_as_number > 10  AND m.value_as_number < 150)
            OR (c.concept_code = '8480-6'  AND m.value_as_number > 60  AND m.value_as_number < 250)
            OR (c.concept_code = '2160-0'  AND m.value_as_number > 0.1 AND m.value_as_number < 20)
@@ -173,9 +190,10 @@ extract_prevent_panel <- function(con) {
              MAX(dt) OVER (PARTITION BY person_id, code) AS max_dt
       FROM bounded
     )
-    SELECT person_id, code, AVG(value) AS value
+    SELECT person_id, code, AVG(value) AS value, MAX(dt) AS dt
     FROM latest WHERE dt = max_dt
-    GROUP BY person_id, code")
+    GROUP BY person_id, code", as_of_clause))
+  m_long$dt <- as.Date(m_long$dt)
 
   # Both HbA1c LOINC codes map to one `a1c` column; collapse to one value per person BEFORE the pivot
   # (a person with rows under BOTH codes would otherwise make pivot_wider produce a list-column).
@@ -183,12 +201,32 @@ extract_prevent_panel <- function(con) {
                 "2160-0" = "creatinine", "39156-5" = "bmi",
                 "4548-4" = "a1c", "17856-6" = "a1c")
   m_long$col <- unname(code_map[m_long$code])
+  # `if (length(dt))` rather than a bare max(): dplyr evaluates the expression once on a zero-row
+  # slice to infer column types, and max() of nothing warns and returns -Inf. That happens for real
+  # whenever `as_of` precedes every measurement, which is a legitimate query (it means "nobody had a
+  # panel yet"), not an error -- so it must return an empty panel quietly rather than warn.
   m_long <- m_long %>% group_by(person_id, col) %>%
-            summarise(value = mean(value), .groups = "drop")
+            summarise(value = mean(value),
+                      dt = if (length(dt)) max(dt) else as.Date(NA), .groups = "drop")
   m_wide <- tidyr::pivot_wider(m_long[, c("person_id", "col", "value")],
                                names_from = "col", values_from = "value")
   for (nm in c("total_c", "hdl_c", "sbp", "creatinine", "bmi", "a1c"))   # ensure all columns exist
     if (!nm %in% names(m_wide)) m_wide[[nm]] <- NA_real_
+
+  # panel_date = the date the panel became COMPLETE, i.e. the LATEST of the five required measurement
+  # dates (a1c is excluded -- it defines diabetes, it is not itself a required PREVENT input). Max and
+  # not min: the panel is not complete until its last constituent exists. This is the date the 30-day
+  # rule (D-017) measures from, so getting it wrong would quietly relax the rule.
+  d_req  <- m_long[m_long$col %in% c("total_c", "hdl_c", "sbp", "creatinine", "bmi"), ]
+  d_wide <- tidyr::pivot_wider(d_req[, c("person_id", "col", "dt")],
+                               names_from = "col", values_from = "dt")
+  for (nm in c("total_c", "hdl_c", "sbp", "creatinine", "bmi"))
+    if (!nm %in% names(d_wide)) d_wide[[nm]] <- as.Date(NA)
+  # do.call(pmax) over the five: NA in ANY of them -> NA panel_date, which is exactly right, since a
+  # person missing an input has no complete panel and therefore no date on which it became complete.
+  d_wide$panel_date <- do.call(pmax, c(d_wide[, c("total_c","hdl_c","sbp","creatinine","bmi")],
+                                       list(na.rm = FALSE)))
+  m_wide <- dplyr::left_join(m_wide, d_wide[, c("person_id", "panel_date")], by = "person_id")
 
   # --- diabetes MEDICATION: match drugs to glucose-lowering INGREDIENTS via concept_ancestor -------
   # (same ingredient->descendant expansion as statins; PROVISIONAL list -- see .DM_MED_INGREDIENTS).
@@ -238,7 +276,7 @@ extract_prevent_panel <- function(con) {
     inner_join(demo[, c("person_id", "age", "sex")], by = "person_id") %>%
     mutate(
       egfr    = egfr_ckd_epi_2021(creatinine, age, sex),
-      # DIABETES (advisor def, 2026-07-21): HbA1c >= 6.8% AND >= 1 glucose-lowering medication.
+      # DIABETES (advisor def; threshold revised 2026-07-31): HbA1c >= 6.5% AND >= 1 glucose-lowering med.
       # NA A1c -> FALSE (definition not met, not "unknown"): the AND cannot be satisfied without it.
       dm      = !is.na(a1c) & a1c >= .DM_A1C_THRESHOLD & (person_id %in% dm_med_ids),
       statin  = person_id %in% statin_ids,
@@ -248,13 +286,18 @@ extract_prevent_panel <- function(con) {
 
   need <- c("age", "sex", "sbp", "total_c", "hdl_c", "egfr", "bmi")
   panel$complete_panel <- stats::complete.cases(panel[, need])
+  # A complete panel must have a date -- the 30-day rule cannot be applied to a panel that does not
+  # know when it existed. These should agree by construction (panel_date is NA iff a required
+  # measurement is missing); if they ever disagree, the join or the pivot above is wrong.
+  panel$complete_panel <- panel$complete_panel & !is.na(panel$panel_date)
   panel$placeholder_inputs <- sprintf(
-    "smoking (attach_smoking()); bp_tx=AHA classes via %s%s; dm med-list PROVISIONAL (sql/05); baseline=most_recent (Q-S6)",
+    "smoking (attach_smoking()); bp_tx=AHA classes via %s%s; dm med-list PROVISIONAL (sql/05); baseline=%s (Q-S6)",
     bp_res$source,
     if (length(bp_res$unresolved) && bp_res$source == "names")
-      sprintf(" [%d name(s) UNRESOLVED]", length(bp_res$unresolved)) else "")
+      sprintf(" [%d name(s) UNRESOLVED]", length(bp_res$unresolved)) else "",
+    if (is.null(as_of)) "most_recent" else sprintf("most_recent_as_of_%s", format(as.Date(as_of))))
 
   panel[, c("person_id", "age", "sex", "sbp", "bp_tx", "total_c", "hdl_c",
             "statin", "dm", "a1c", "smoking", "egfr", "bmi",
-            "complete_panel", "placeholder_inputs")]
+            "complete_panel", "panel_date", "placeholder_inputs")]
 }

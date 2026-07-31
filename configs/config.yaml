@@ -77,10 +77,26 @@ outcome:
   code_map: configs/ascvd_codes.yaml        # <- the outcome, in reviewable form
   sources: [condition_occurrence, procedure_occurrence]
 
-  # A revascularisation is a TREATMENT DECISION, not purely a disease event, and it is confounded by
-  # healthcare access. Including it inflates the event count; excluding it loses real events. So the
-  # primary analysis is reported BOTH WAYS rather than us guessing (Q-A1, T-015).
+  # ADVISOR DECISION 2026-07-31 (D-016): ALL THREE classes count as incidence of ASCVD — a chronic
+  # ASCVD diagnosis, an acute event, and a revascularisation alike. Q-A1 is resolved in favour of
+  # inclusion.
+  incident_event_classes: [acute_event, chronic_disease, revascularisation]
+
+  # ...but the classes stay separable and BOTH definitions get reported (Q-A1's original point stands
+  # for the sensitivity analysis, and there is a second reason now). The published PREVENT rate is a
+  # HARD-outcome rate — nonfatal MI, nonfatal stroke, CV death — so ONLY `acute_event` is comparable
+  # to it. Reporting the broad outcome against the literature band would look like a 3-5x excess of
+  # events when it is really a different outcome definition.
   include_revascularisation: report_both
+  sensitivity_event_classes: [acute_event]        # the literature-comparable hard outcome
+
+  # ADVISOR DECISION 2026-07-31 (D-017): a participant counts only if their complete PREVENT panel
+  # predates the event by at least this many days. Stops the panel being measured BY the event —
+  # lipids and a BP drawn during an MI admission are a consequence of the disease, not a prediction
+  # of it. Implemented as a SYMMETRIC blanking window (nobody is at risk until baseline + this many
+  # days), because removing those events without also removing their person-time biases every
+  # incidence rate downward with no visible bug. See ascvd_status_at().
+  min_days_panel_to_event: 30
 
   horizon_years: 10                         # PREVENT provides both 10y and 30y
   competing_risk: non_ascvd_death           # Fine-Gray sensitivity analysis (T-010)
@@ -180,6 +196,72 @@ statistics:
 
   check_proportional_hazards: true          # Q-S5 — genetic effects may be stronger at younger ages
   report: [discrimination, calibration, decision_curve, nri]
+
+# ---------------------------------------------------------------------------------------------
+# Literature benchmarks  (VALIDATION §1 layer 3 — the EXTERNAL ground truth)
+# ---------------------------------------------------------------------------------------------
+# Numbers taken from the PREVENT paper itself, so that "is our result plausible?" is answered against
+# a citation instead of against intuition. Sourced 2026-07-30 from the OPEN full text at PMC10910659
+# — the paper is not paywalled there, which an earlier session assumed it was (meeting.md §2).
+#
+# These are REFERENCE VALUES, not tunables. Do not edit them to make a run agree; if a run disagrees,
+# that is the finding. Only the `plausible_band` is a judgment call, and its reasoning is spelled out.
+literature:
+  prevent_paper:
+    citation: "Khan SS et al. Development and Validation of the AHA PREVENT Equations.
+               Circulation. 2024;149(6):430-449"
+    doi: 10.1161/CIRCULATIONAHA.123.067626
+    open_full_text: PMC10910659
+
+    # Cohort scale. derivation + validation = 6,612,004 people and 211,515 total CVD events, which
+    # is exactly what the paper's abstract states — an arithmetic check that these were read right.
+    # NB `n_participants`, not `n`. In YAML 1.1 a bare `n` key parses as the BOOLEAN false (n = no),
+    # so `n: 3281919` silently becomes the key `FALSE`. Found the hard way, 2026-07-30.
+    derivation: { n_participants: 3281919, mean_age: 52.6, pct_female: 56,
+                  mean_followup_years_female: 4.8, mean_followup_years_male: 4.6,
+                  events_cvd: 106661, events_ascvd: 66503 }
+    validation: { n_participants: 3330085,
+                  mean_followup_years_female: 5.0, mean_followup_years_male: 4.8,
+                  events_cvd: 104854, events_ascvd: 67902 }
+
+    # DERIVED from the counts above (events / (N x mean follow-up)). This is the number our observed
+    # incidence gets compared against. Ages 30-79, primary prevention, mean age ~52-53.
+    ascvd_rate_per_1000py:
+      derivation_female: 3.60
+      derivation_male:   5.23
+      derivation_pooled: 4.30
+      validation_pooled: 4.15
+    cvd_rate_per_1000py:
+      derivation_pooled: 6.90
+
+    # Discrimination in external validation, base model, ASCVD — the target for T-007.
+    c_statistic_ascvd: { female: 0.774, male: 0.736 }
+
+  # The band we expect OUR observed acute-ASCVD rate to fall in, and why it is not just "4.2".
+  # Our cohort is OLDER (median 58 vs the paper's mean ~52.6) and is selected on having a complete
+  # lab panel, i.e. on sustained healthcare contact (A-015) — both push the true rate UP. Against
+  # that, All of Us EHR capture is partial (care outside the contributing site is invisible, A-006),
+  # which pushes the OBSERVED rate DOWN. The band is wide because both forces are real and unmeasured.
+  #
+  # This is a SMOKE ALARM, not a hypothesis test. Landing outside it means "find out why before
+  # showing the curve", not "the study failed".
+  #
+  # !! THE BAND APPLIES TO THE ACUTE-ONLY OUTCOME. The published 4.15-4.30 counts hard events
+  # (nonfatal MI, nonfatal stroke, CV death). Our PRIMARY outcome since D-016 is broader — chronic
+  # ASCVD diagnoses and revascularisations count too — and a first-ever chronic IHD code is far more
+  # common in EHR data than a first MI. Checking the broad outcome against this band would flag a
+  # correct pipeline as contaminated. `check_incidence_vs_literature(outcome = "broad")` refuses the
+  # comparison for exactly that reason.
+  expected_ascvd_incidence:
+    applies_to_outcome:          acute_event      # NOT the D-016 primary outcome
+    plausible_band_per_1000py:   [4.0, 12.0]
+    investigate_outside:         [2.0, 20.0]   # outside this, suspect a structural defect
+    rationale_low:  "under-ascertainment: ICD10CM-only misses pre-2015 events; EHR capture gaps;
+                     administrative censoring at the CDR cutoff inflates person-time (nobody is
+                     censored at last contact), which dilutes the rate"
+    rationale_high: "prevalent disease leaking into the at-risk set (pre-2015 ICD9 blindness hides
+                     the prior event), chronic_disease codes counted as acute events, or the
+                     CPT 929 over-capture (92950 CPR, 92960 cardioversion) inflating the numerator"
 
 # ---------------------------------------------------------------------------------------------
 # Output  (D-005 — immutable and versioned; a new version NEVER overwrites an old one)

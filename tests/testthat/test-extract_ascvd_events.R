@@ -97,8 +97,10 @@ test_that("revascularisation is sourced from procedures and never folded into ac
   skip_if(nrow(rev) == 0, "fixture has no revascularisation codes")
   expect_true(all(rev$source_table == "procedure"))
 
-  # Q-A1: a revascularisation is a treatment decision, not purely a disease event. The default
-  # outcome must NOT include it -- if this ever flips, every event count silently inflates.
+  # Q-A1: a revascularisation is a treatment decision, not purely a disease event. As of D-016 it DOES
+  # count toward the outcome (advisor, 2026-07-31) -- but it must remain SEPARABLE, because the
+  # acute-only outcome is the one comparable to the published PREVENT rate and the one the
+  # sensitivity analysis needs. So the invariant is not "excluded" but "never silently merged".
   acute_only <- first_ascvd_event(ev, "acute_event")
   expect_false(any(acute_only$event_class == "revascularisation"))
 })
@@ -178,36 +180,58 @@ test_that("a code ON the baseline date counts as prevalent, not incident", {
   expect_equal(st$ascvd_status, "prevalent")
 })
 
-test_that("prevalence uses a BROADER code set than the incident outcome", {
+test_that("a chronic-only person is prevalent before baseline and INCIDENT after it (D-016)", {
   con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   ev  <- extract_ascvd_events(con, .codes)
 
   chronic <- ev[ev$ascvd_class == "chronic_disease", ]
   skip_if(nrow(chronic) == 0, "fixture has no chronic codes")
 
-  # Someone whose ONLY ASCVD code is chronic still HAS the disease and must be excluded at baseline
-  # (D-013), even though a chronic code is not an incident EVENT. Using the narrow set for both is a
-  # real error: it leaves prevalent cases in the at-risk set.
   p <- chronic$person_id[1]
-  expect_false(p %in% first_ascvd_event(ev, "acute_event")$person_id)
+  expect_false(p %in% first_ascvd_event(ev, "acute_event")$person_id)   # chronic-only, by construction
 
+  # Before baseline: prevalent, excluded (D-013 -- unchanged).
   coh <- data.frame(person_id = p, baseline_date = chronic$first_date[1] + 30)
   st  <- ascvd_status_at(coh, ev, end_of_followup = as.Date("2022-01-01"))
   expect_equal(st$ascvd_status, "prevalent")
+
+  # After baseline: an INCIDENT event. This is the D-016 change (advisor, 2026-07-31) -- a chronic
+  # ASCVD diagnosis now counts as incidence. Under the old acute-only default this same person was
+  # "event_free" and contributed person-time with no event, so this assertion is the whole decision.
+  coh2 <- data.frame(person_id = p, baseline_date = chronic$first_date[1] - 365)
+  st2  <- ascvd_status_at(coh2, ev, end_of_followup = as.Date("2030-01-01"))
+  expect_equal(st2$ascvd_status, "incident")
+  expect_equal(st2$event, 1L)
+  expect_equal(st2$event_class, "chronic_disease")
+
+  # ...and the acute-only sensitivity analysis still recovers the old answer, which is what keeps the
+  # literature comparison (acute = the published hard outcome) available.
+  st3 <- ascvd_status_at(coh2, ev, end_of_followup = as.Date("2030-01-01"),
+                         event_classes = "acute_event")
+  expect_equal(st3$ascvd_status, "event_free")
 })
 
-test_that("follow-up time is computed from the anchor, and event-free people get the full window", {
+test_that("follow-up runs from the END of the 30-day blanking window, not from the anchor", {
   con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
   ev  <- extract_ascvd_events(con, .codes)
 
   t0  <- as.Date("2010-01-01")
   eof <- as.Date("2020-01-01")
-  # A person with no ASCVD codes at all: event-free, full window of person-time.
+  # A person with no ASCVD codes at all: event-free for the whole window.
   none <- data.frame(person_id = -999, baseline_date = t0)
   st   <- ascvd_status_at(none, ev, end_of_followup = eof)
   expect_equal(st$ascvd_status, "event_free")
   expect_equal(st$event, 0L)
-  expect_equal(st$followup_days, as.numeric(eof - t0))
+
+  # D-017: person-time starts at baseline + 30, because events in that window are not counted either.
+  # Counting the 30 days as exposure while deleting its events would bias every rate DOWN -- which is
+  # precisely the asymmetry the blanking window exists to avoid, so it is pinned here.
+  expect_equal(st$risk_start_date, t0 + 30)
+  expect_equal(st$followup_days, as.numeric(eof - (t0 + 30)))
+
+  # And with the rule disabled, the old behaviour is recovered exactly.
+  st0 <- ascvd_status_at(none, ev, end_of_followup = eof, min_days_panel_to_event = 0)
+  expect_equal(st0$followup_days, as.numeric(eof - t0))
 })
 
 test_that("an event after the CDR cutoff is not counted", {
@@ -258,4 +282,78 @@ test_that("the outcome definition is ICD10CM-only, so ICD9 events are not ascert
   # to fix silently -- adding ICD9 prefixes changes who is PREVALENT, which changes the cohort. The
   # decision needs the numbers from audit_ascvd_codes() Layer 3.
   expect_false("ICD9CM" %in% def$codes$vocabulary_id)
+})
+
+# ------------------------------------------------------------------------------------------------
+# D-017 -- the 30-day rule: the complete PREVENT panel must predate the event by >= 30 days.
+# ------------------------------------------------------------------------------------------------
+# Implemented as a SYMMETRIC blanking window (see ascvd_status_at()): nobody is at risk until
+# baseline + 30 days, so the events removed and the person-time removed are the same 30 days. These
+# tests pin both halves, because getting only the numerator right is the failure mode that biases
+# every incidence rate downward without producing a visible bug.
+
+test_that("an event INSIDE the 30-day window is excluded, and is not silently called event-free", {
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev  <- extract_ascvd_events(con, .codes)
+  first <- first_ascvd_event(ev, c("acute_event", "chronic_disease", "revascularisation"))
+  skip_if(nrow(first) < 1, "fixture has no ASCVD events")
+
+  a <- first[1, ]
+  # Baseline 10 days before the event: the panel does NOT predate it by 30 days.
+  coh <- data.frame(person_id = a$person_id, baseline_date = a$event_date - 10)
+  st  <- ascvd_status_at(coh, ev, end_of_followup = a$event_date + 3650)
+
+  expect_equal(st$ascvd_status, "excluded_short_interval")
+  # NOT event = 0. Coding them event-free would keep their person-time in the denominator while
+  # deleting a real event from the numerator -- the exact bias this construction avoids.
+  expect_true(is.na(st$event))
+  expect_true(is.na(st$followup_days))
+  # And not "prevalent" either: the disease came AFTER baseline, it was just too soon to use.
+  expect_false(st$ascvd_status == "prevalent")
+})
+
+test_that("an event JUST OUTSIDE the window counts, and the boundary is exactly 30 days", {
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev  <- extract_ascvd_events(con, .codes)
+  first <- first_ascvd_event(ev, c("acute_event", "chronic_disease", "revascularisation"))
+  skip_if(nrow(first) < 1, "fixture has no ASCVD events")
+  a   <- first[1, ]
+  eof <- a$event_date + 3650
+
+  # Exactly 30 days: risk_start == event_date, and the rule is `> risk_start`, so this is STILL
+  # excluded -- a panel drawn exactly 30 days before is not "at least 30 days before" the person
+  # being at risk. Off-by-one here silently moves events between arms, so it is pinned.
+  at30 <- ascvd_status_at(data.frame(person_id = a$person_id, baseline_date = a$event_date - 30),
+                          ev, end_of_followup = eof)
+  expect_equal(at30$ascvd_status, "excluded_short_interval")
+
+  # 31 days: incident, with follow-up measured from risk_start (1 day), not from baseline (31 days).
+  at31 <- ascvd_status_at(data.frame(person_id = a$person_id, baseline_date = a$event_date - 31),
+                          ev, end_of_followup = eof)
+  expect_equal(at31$ascvd_status, "incident")
+  expect_equal(at31$event, 1L)
+  expect_equal(at31$followup_days, 1)
+})
+
+test_that("min_days_panel_to_event = 0 reproduces the pre-D-017 behaviour exactly", {
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev  <- extract_ascvd_events(con, .codes)
+  first <- first_ascvd_event(ev, c("acute_event", "chronic_disease", "revascularisation"))
+  skip_if(nrow(first) < 1, "fixture has no ASCVD events")
+  a <- first[1, ]
+
+  coh <- data.frame(person_id = a$person_id, baseline_date = a$event_date - 10)
+  st  <- ascvd_status_at(coh, ev, end_of_followup = a$event_date + 365,
+                         min_days_panel_to_event = 0)
+  expect_equal(st$ascvd_status, "incident")     # excluded under the rule, incident without it
+  expect_equal(st$followup_days, 10)
+  # The sensitivity analysis "what did the 30-day rule cost us?" is therefore a one-argument change.
+})
+
+test_that("a negative min_days_panel_to_event is refused rather than silently reversing the window", {
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev  <- extract_ascvd_events(con, .codes)
+  expect_error(ascvd_status_at(data.frame(person_id = -999, baseline_date = as.Date("2015-01-01")),
+                               ev, end_of_followup = as.Date("2020-01-01"),
+                               min_days_panel_to_event = -30))
 })

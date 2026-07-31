@@ -38,6 +38,26 @@ assert the bug. External ground truth cannot be argued with:
 
 That test is the gate on T-006, and by extension on every result in the project.
 
+**✅ SATISFIED 2026-07-30** — `tests/testthat/test-prevent-published-example.R`. `run_prevent()`
+reproduces the paper's worked example (50-y/o female, TC 240, HDL 55, treated SBP 160, BMI 35, eGFR 90)
+to within the paper's own rounding on 11 of 12 reported values; the 12th sits on a whole-percent
+rounding boundary and is a 30-year HF figure, which is not on any analysis path. See
+`docs/prevent_literature_benchmarks.md`.
+
+**The delay is the lesson.** This gate sat open for a week because the paper was recorded as paywalled
+in three places. It is **open access at PMC10910659**. A believed-but-unchecked access assumption
+blocked the project's most important test — the same failure shape as T-012's "committed with outputs".
+When a document says a source is unavailable, check the source, not the document.
+
+### Layer 3 applies to the OUTCOME too, not just the equation
+
+A validated equation fed correct inputs still produces a wrong survival curve if the *events* are
+wrong — and a curve built on mis-ascertained events looks entirely normal. So the published **event
+rate** is a layer-3 benchmark in its own right: ≈**4.2 incident ASCVD per 1000 person-years**
+(ages 30–79, mean age 52.6), transcribed into `configs/config.yaml: literature:` and checked by
+`src/ascvd/validation/literature_benchmarks.R` (T-020). It is a smoke alarm with a deliberately wide
+band, not a hypothesis test.
+
 ---
 
 ## 2. Current state — what is actually verified today
@@ -54,7 +74,8 @@ Honest inventory, 2026-07-13.
 | Cleaning idiom (`clean_measurement`, `clean_codes`) | ✅ **59 testthat tests pass** | T-005 |
 | Concept dictionary (`resolve_concepts`) | ✅ tested **against the real fixture DuckDB** | T-014, D-014 |
 | **Fixture coverage of the PREVENT panel** | ❌ **ALMOST NONE** | LDL/trig/BMI only; **no SBP, creatinine, HbA1c, smoking, or antihypertensives**. Blocks offline testing of the PREVENT extractor → **T-004** |
-| PREVENT implementation | ⛔ **does not exist** | T-016 (R, not Python — D-011) |
+| PREVENT implementation | ✅ **VALIDATED** 2026-07-30 | T-016. `run_prevent()` → `AHAprevent` (official). Reproduces **Khan et al.'s published worked example** (layer 3) *and* agrees with the independent `preventr` package across ~240 profiles. Full suite **230 pass, 0 fail** |
+| Observed ASCVD incidence vs the literature | ⏳ **code ready, needs one Workbench run** | T-020. Band + checker in `configs/config.yaml: literature:` and `src/ascvd/validation/literature_benchmarks.R` (17 tests) |
 | Phenotype schema contract | ⛔ **does not exist** | §3 below, T-003 |
 | Genetic pipeline | ⛔ **does not exist**, and has **no offline substrate** | T-008, Q-G3 |
 | Notebook free of controlled-tier data | ✅ **VERIFIED** 2026-07-14 | T-012: **0 outputs** in 291 code cells, in the working tree *and* all history |

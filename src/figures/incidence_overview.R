@@ -79,8 +79,12 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #'   Whichever is chosen, the figure captions say which, because "predicted risk" means two different
 #'   things under the two settings.
 #' @return list(events, cohort, at_risk, ages, counts)
+#' @param min_days_panel_to_event  D-017, the advisor's 30-day rule: the complete PREVENT panel must
+#'   predate the event by at least this many days. Applied as a symmetric blanking window, so nobody
+#'   is at risk until landmark + this many days. Set 0 to measure what the rule costs.
 build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only = TRUE,
-                                 attach_smoking_status = FALSE) {
+                                 attach_smoking_status = FALSE,
+                                 min_days_panel_to_event = 30) {
   stopifnot(exists("extract_ascvd_events", mode = "function"),
             exists("extract_prevent_panel", mode = "function"))
   landmark        <- as.Date(landmark)
@@ -90,7 +94,11 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
          call. = FALSE)
 
   events <- extract_ascvd_events(con)
-  panel  <- extract_prevent_panel(con)
+  # as_of = landmark: the panel is the one that could have been in hand on the landmark date. Without
+  # it the extractor takes each person's most-recent-EVER value, which for anyone who had an event and
+  # stayed in care post-dates that event -- so their "baseline" covariates would be measured after the
+  # outcome, and the 30-day rule (D-017) could never be satisfied honestly.
+  panel  <- extract_prevent_panel(con, as_of = landmark)
 
   # Real survey smoking, if asked for. Left OFF by default because it shrinks the cohort by ~61% and
   # that shrink must be a decision, not a surprise -- but leaving it off is NOT the safe option, it
@@ -122,10 +130,25 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
             panel$complete_panel_smoking
           else panel$complete_panel
   cohort <- panel[keep, , drop = FALSE]
+  if (!nrow(cohort))
+    stop(sprintf("build_incidence_frame(): NOBODY has a complete panel as of the %s landmark
+  (%d people had >= 1 PREVENT measurement by then). The landmark is almost certainly too early --
+  the panel is built with as_of = landmark, so measurements taken AFTER it do not count, which is
+  the point. Move the landmark later, or check the measurement date range in the CDR.",
+                 format(landmark), nrow(panel)), call. = FALSE)
   cohort$baseline_date <- landmark
 
+  # PRIMARY outcome (D-016): all three classes count as incident ASCVD, with the 30-day rule (D-017).
   at_risk <- ascvd_status_at(cohort, events, anchor_col = "baseline_date",
-                            event_classes = "acute_event", end_of_followup = end_of_followup)
+                            end_of_followup = end_of_followup,
+                            min_days_panel_to_event = min_days_panel_to_event)
+
+  # SENSITIVITY / literature-comparable outcome: acute events only. Kept alongside rather than as a
+  # separate run, because the two must be computed on the SAME at-risk set to be comparable -- and
+  # because the published PREVENT rate can only be checked against this one.
+  at_risk_acute <- ascvd_status_at(cohort, events, anchor_col = "baseline_date",
+                            event_classes = "acute_event", end_of_followup = end_of_followup,
+                            min_days_panel_to_event = min_days_panel_to_event)
 
   # Age at first acute event, from year_of_birth (OMOP `person`). Approximate to the year, which is
   # all a histogram needs and all that is safe to show.
@@ -135,21 +158,30 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
   acute$year_of_birth <- yob$year_of_birth[match(acute$person_id, yob$person_id)]
   acute$age_at_event  <- as.integer(format(acute$event_date, "%Y")) - acute$year_of_birth
 
-  # The attrition ladder to the at-risk set. Every step is a number someone will ask about.
+  # The attrition ladder to the at-risk set. Every step is a number someone will ask about -- and the
+  # 30-day exclusion is now one of them, reported explicitly rather than absorbed into "not at risk".
   counts <- data.frame(
     step = c("PREVENT panel (>=1 input, EHR, 30-79)",
              if (isTRUE(attach_smoking_status))
                "Scorable panel (complete inputs + smoking answer)"
              else "Scorable panel (complete inputs, sex known)",
-             "Free of ASCVD at landmark (at-risk set)",
-             "Incident acute ASCVD during follow-up"),
+             "Prevalent ASCVD at landmark (excluded)",
+             sprintf("Event within %d days of the panel (excluded, D-017)",
+                     min_days_panel_to_event),
+             "At-risk set",
+             "Incident ASCVD, all classes (D-016)",
+             "  of which acute events (literature-comparable)"),
     n = c(nrow(panel), nrow(cohort),
+          sum(at_risk$ascvd_status == "prevalent"),
+          sum(at_risk$ascvd_status == "excluded_short_interval"),
           sum(at_risk$ascvd_status %in% c("event_free", "incident")),
-          sum(at_risk$ascvd_status == "incident")),
+          sum(at_risk$ascvd_status == "incident"),
+          sum(at_risk_acute$ascvd_status == "incident")),
     stringsAsFactors = FALSE)
 
-  list(events = events, cohort = cohort, at_risk = at_risk, acute = acute, counts = counts,
-       landmark = landmark, end_of_followup = end_of_followup, smoking_source = smoking_source)
+  list(events = events, cohort = cohort, at_risk = at_risk, at_risk_acute = at_risk_acute,
+       acute = acute, counts = counts, landmark = landmark, end_of_followup = end_of_followup,
+       smoking_source = smoking_source, min_days_panel_to_event = min_days_panel_to_event)
 }
 
 #' Observed cumulative incidence after the landmark (Kaplan-Meier complement).
@@ -173,9 +205,11 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
 #'
 #' @return invisibly, the frame list from build_incidence_frame().
 make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_followup,
-                                  scorable_only = TRUE, attach_smoking_status = FALSE, dpi = 150) {
+                                  scorable_only = TRUE, attach_smoking_status = FALSE, dpi = 150,
+                                  min_days_panel_to_event = 30) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-  fr <- build_incidence_frame(con, landmark, end_of_followup, scorable_only, attach_smoking_status)
+  fr <- build_incidence_frame(con, landmark, end_of_followup, scorable_only, attach_smoking_status,
+                              min_days_panel_to_event = min_days_panel_to_event)
   save <- function(name, p, w = 7, h = 4.5)
     ggsave(file.path(outdir, name), p, width = w, height = h, dpi = dpi, bg = "white")
   fmt <- function(x) format(x, big.mark = ",", trim = TRUE)
@@ -255,17 +289,45 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
       ggplot(ci, aes(years, cuminc)) +
         geom_step(color = .CLASS_FILL[["acute_event"]], linewidth = 1.1) +
         scale_y_continuous(labels = function(x) paste0(x, "%")) +
-        labs(title = "Observed cumulative incidence of acute ASCVD",
+        labs(title = "Observed cumulative incidence of ASCVD",
              subtitle = sprintf("From the %s landmark, among those free of ASCVD at that date",
                                 format(fr$landmark)),
              x = "Years since landmark", y = "Cumulative incidence",
              caption = sprintf(paste("Kaplan-Meier complement. At risk N = %s, events = %s.",
-                                     "Censored at %s.\nThis figure is ANCHOR-FREE: it uses event dates",
-                                     "and the landmark only — covariate values never enter,\nso the",
-                                     "unresolved Q-S6 anchor cannot bias it. Competing risk of death",
-                                     "not yet modelled (no death table wired)."),
-                               fmt(n_at_risk), fmt(n_ev), format(fr$end_of_followup))) +
-        .theme_inc(), w = 7.5, h = 4.8)
+                                     "Censored at %s.\nOUTCOME (D-016): chronic ASCVD diagnosis, acute",
+                                     "event, OR revascularisation — all three count. Follow-up starts",
+                                     "%d days\nafter the landmark (D-017), so the panel predates any",
+                                     "event. This figure is ANCHOR-FREE: event dates and the landmark",
+                                     "only.\nCompeting risk of death not yet modelled (no death table",
+                                     "wired)."),
+                               fmt(n_at_risk), fmt(n_ev), format(fr$end_of_followup),
+                               fr$min_days_panel_to_event)) +
+        .theme_inc(), w = 7.5, h = 5.1)
+
+    # 14b. the same curve under the ACUTE-ONLY outcome, overlaid. This is the pair that has to be on
+    # the slide together: the broad curve is the study's outcome, the acute one is the only curve
+    # comparable to the published PREVENT rate, and the gap between them IS the D-016 decision made
+    # visible rather than argued about.
+    ci_ac <- .cuminc(fr$at_risk_acute)
+    if (!is.null(ci_ac) && nrow(ci_ac)) {
+      both <- rbind(cbind(ci,    outcome = "All ASCVD (D-016 primary)"),
+                    cbind(ci_ac, outcome = "Acute events only (literature-comparable)"))
+      n_ac <- sum(fr$at_risk_acute$ascvd_status == "incident")
+      save("17_cumulative_incidence_broad_vs_acute.png",
+        ggplot(both, aes(years, cuminc, color = outcome)) +
+          geom_step(linewidth = 1.1) +
+          scale_color_manual(values = c("#C44E52", "#4C72B0"), name = NULL) +
+          scale_y_continuous(labels = function(x) paste0(x, "%")) +
+          labs(title = "The outcome definition changes the curve",
+               subtitle = "Same at-risk set, same clock — only what counts as an event differs",
+               x = "Years since landmark", y = "Cumulative incidence",
+               caption = sprintf(paste("Events: %s broad vs %s acute-only, on the same at-risk N =",
+                                       "%s.\nOnly the acute-only curve can be checked against Khan et",
+                                       "al.'s published ~4.2 per 1000 person-years,\nwhich is a",
+                                       "hard-outcome rate (nonfatal MI, nonfatal stroke, CV death)."),
+                                 fmt(n_ev), fmt(n_ac), fmt(n_at_risk))) +
+          .theme_inc() + theme(legend.position = "top"), w = 7.5, h = 5.1)
+    }
 
     # by sex — the stratification the advisor asks for every time, and PREVENT is sex-specific
     if ("sex" %in% names(at_risk)) {

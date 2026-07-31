@@ -96,7 +96,7 @@ DM_STD = 201826                              # SNOMED "Type 2 diabetes mellitus"
 ANTIHTN = [1308216, 974166]   # lisinopril, hydrochlorothiazide (RxNorm ingredients)
 
 # Glucose-lowering (diabetes) medication ingredient. Used by the ADVISOR diabetes definition
-# (2026-07-21): dm := most-recent HbA1c >= 6.8% AND >= 1 diabetes med. metformin (1503297) is in
+# (2026-07-21): dm := most-recent HbA1c >= 6.5% AND >= 1 diabetes med. metformin (1503297) is in
 # extract_prevent.R's .DM_MED_INGREDIENTS, so the default extractor finds it with no parameterisation
 # (same contract as the statin ingredients). The real-CDR list is PROVISIONAL -- see sql/05.
 DM_MED = [1503297]            # metformin (RxNorm ingredient)
@@ -689,8 +689,8 @@ def build_prevent_scenarios():
     add_meas(1000030, PD, SBP, 134.0, unit="mmHg", unit_cid=UNIT_MMHG)              # same-day duplicate
     add_meas(1000030, PD, CREAT, 1.1)
     add_meas(1000030, PD, BMI_C, 26.4, unit="kg/m2", unit_cid=UNIT_KGM2)
-    add_meas(1000030, PD, HBA1C1, 8.0, unit="%", unit_cid=UNIT_PERCENT)  # HbA1c>=6.8 but NO diabetes med
-    # DM TRUTH TABLE: HbA1c 8.0% (>=6.8) but no diabetes medication -> dm_prevent=0. The A1c limb alone
+    add_meas(1000030, PD, HBA1C1, 8.0, unit="%", unit_cid=UNIT_PERCENT)  # HbA1c>=6.5 but NO diabetes med
+    # DM TRUTH TABLE: HbA1c 8.0% (>=6.5) but no diabetes medication -> dm_prevent=0. The A1c limb alone
     # is not enough either.
     expect(1000030, "complete panel, SBP dirty (out-of-range / wrong-unit / same-day dup); HbA1c high, no med -> not dm",
            CAD_code=0, CAD_code_date=None, LDL=60, Date_LDL_assessment=PD, BMI=26.4,
@@ -730,7 +730,7 @@ def build_prevent_scenarios():
     add_smoking(1000032, "2020-01-01", "Never")
     add_drug(1000032, "2016-01-01", ANTIHTN[1])
     add_drug(1000032, "2016-01-01", DM_MED[0])                          # HbA1c 7.2 AND a diabetes med
-    # DM TRUTH TABLE: HbA1c 7.2% (>=6.8) AND a diabetes medication -> dm_prevent=1. The ONE positive
+    # DM TRUTH TABLE: HbA1c 7.2% (>=6.5) AND a diabetes medication -> dm_prevent=1. The ONE positive
     # case under the advisor definition. Note has_diabetes_dx=0 (no ICD code): the code and the new
     # definition still identify different people, which is exactly the point.
     expect(1000032, "complete panel; HbA1c 7.2% + diabetes med -> dm TRUE (no ICD code; definitions diverge)",
@@ -1015,7 +1015,7 @@ def main():
             # Validated by tests/testthat/test-prevent-panel-sql.R, not by verify.py.
             "has_total_cholesterol", "has_hdl_c", "has_systolic_bp", "has_serum_creatinine",
             "has_bmi", "has_diabetes_dx", "has_hba1c", "has_smoking", "has_antihypertensive",
-            # dm_prevent: the ADVISOR diabetes definition (HbA1c>=6.8 AND >=1 diabetes med). Distinct
+            # dm_prevent: the ADVISOR diabetes definition (HbA1c>=6.5 AND >=1 diabetes med). Distinct
             # from has_diabetes_dx (ICD code). Validated by tests/testthat/test-extract_prevent.R.
             "dm_prevent",
             "complete_prevent_panel", "note"]

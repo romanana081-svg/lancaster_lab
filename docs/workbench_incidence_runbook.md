@@ -129,6 +129,37 @@ Copy them out:
 system(paste0("gsutil -m cp figures/*.png ", Sys.getenv("WORKSPACE_BUCKET"), "/figures/"))
 ```
 
+### Step 3b — check the incidence against the PREVENT paper BEFORE anyone reads a curve
+
+**Do not skip this and do not put figure 14 on a slide before it passes.** A survival curve built on
+mis-ascertained events looks completely normal — smooth, monotone, plausibly shaped, and wrong. The
+only cheap defence is comparing the rate to a published rate.
+
+```r
+source("src/ascvd/validation/literature_benchmarks.R")
+
+# `status` is the frame from ascvd_status_at() (prevalent people carry event = NA and are correctly
+# excluded from the denominator). If make_incidence_figures() built it internally, rebuild it here.
+check_incidence_from_status(status, label = "acute ASCVD, landmark 2018-01-01")
+```
+
+| Verdict | What it means | What to do |
+|---|---|---|
+| `PLAUSIBLE` (4–12 /1000 PY) | in line with Khan et al.'s 4.15–4.30, adjusted for our older, EHR-selected cohort | show the curve |
+| `LOW` (<4) | under-ascertainment — EHR capture gaps, ICD10CM-only missing pre-2015, or person-time inflated by censoring everyone at the CDR cutoff instead of last contact | say so on the slide; it bounds every downstream claim |
+| `HIGH` (>12) | prevalent disease leaking into the at-risk set, `chronic_disease` counted as acute, or the CPT `929` over-capture | Layer 2 per-code counts tell you which |
+| `STRUCTURAL DEFECT LIKELY` (<2 or >20) | not a population difference | fix before presenting |
+
+**Expected on this run:** ~6–7 per 1000 PY, ~2,000 events, **2–4% cumulative incidence at 4.5 years**
+on a ~70k at-risk set. Full reasoning: [`prevent_literature_benchmarks.md`](prevent_literature_benchmarks.md).
+
+Also worth one line while you are there — the first look at PREVENT's calibration here (T-007):
+
+```r
+# If PREVENT were well calibrated, observed 4.5-y incidence ~= 0.45 x mean predicted 10-yr risk.
+mean(scored$prevent_base_10yr_ASCVD, na.rm = TRUE) * 0.45   # vs the observed % from the check above
+```
+
 then download from the bucket in the Workbench file browser.
 
 ### What you get
@@ -181,3 +212,59 @@ caption says so — **don't crop it.**
 | `figure 16 skipped: fewer than 20 scored people` | at-risk set too small — check the landmark isn't after most people's data. |
 | `NEGATIVE follow-up` warning | landmark is after `end_of_followup`. |
 | counts look wrong by a lot | `bigrquery` returns `integer64`; check for a coercion issue first. |
+
+---
+
+## Step 5 — the CASE-ANCHORED cohort (D-019) — *this is the one to demo*
+
+Every case is anchored at **their own event date − 30 days**. There is no shared landmark. For each
+case we sample **10 controls who were event-free at that same instant**, anchored at the same date.
+
+```r
+source("src/phenotype/R/extract_ascvd_events.R")
+source("src/ascvd/stats/risk_set_sampling.R")
+source("src/ascvd/prevent/run_prevent.R")
+
+events <- extract_ascvd_events(con)
+
+res <- build_case_anchored_cohort(con, events,
+                                  washout_days = 30,      # D-017
+                                  ratio        = 10,      # controls per case
+                                  seed         = 20260731)
+
+print(res$dropped)            # cases -> cases with a qualifying panel -> excluded. BRING THIS.
+table(res$cohort$role)        # cases vs controls
+sum(res$cohort$becomes_case_later)   # controls who have an event later (expected, not a bug)
+```
+
+Then attach each person's inputs **as of their own anchor date** and score:
+
+```r
+coh <- attach_panel_at_anchor(con, res$cohort)          # one query per 2,000 people
+coh$egfr <- egfr_ckd_epi_2021(coh$creatinine, coh$age, coh$sex)   # needs age/sex joined first
+scored <- run_prevent(coh)
+
+# the headline slide: does PREVENT score cases higher than controls?
+aggregate(prevent_base_10yr_ASCVD ~ role, scored, function(x) round(mean(x, na.rm = TRUE), 2))
+```
+
+### What to say about it
+
+- **Controls can become cases later, and are kept.** Each control row represents *person-time at
+  risk at that instant*, not "a person who never had an event". Dropping future cases is the classic
+  incidence-density-sampling error and biases the result. The flag `becomes_case_later` reports how
+  many, so the question is answered rather than dodged.
+- **The same person can be a control for more than one case.** Same reason.
+- **`weight` is on every row** (eligible ÷ sampled in that risk set). Discrimination (C-index) and the
+  offset-Cox test on γ are valid unweighted. **Absolute calibration is not** — a 10:1 sample has ~10×
+  the cohort's event rate, so "predicted 8% vs observed 8%" needs the weights. That matters because
+  PREVENT's miscalibration in All of Us is exactly what DESIGN stage 5 exists to catch, and what a
+  genetic term would otherwise silently absorb.
+- **The seed is recorded** (`res$params$seed`). Re-running with it rebuilds the identical cohort.
+
+### The attrition number that will get asked about
+
+`res$dropped` row 3 is **cases excluded because their panel completed less than 30 days before the
+event, or never**. In an EHR cohort this may be large — the panel and the event often arrive in the
+same clinical episode, which is precisely the reverse causation the rule exists to remove. Report it;
+don't bury it. `washout_days = 0` re-runs without the rule, which measures what it cost.

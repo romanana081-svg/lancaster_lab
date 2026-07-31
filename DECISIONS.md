@@ -329,6 +329,100 @@ question, and the answer must not depend on anyone's memory.
 
 ---
 
+## D-018 — The diabetes HbA1c cut returns to **6.5%** (the ADA standard)
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-31 (advisor, via the user)
+- **Context:** D-016's sibling from the 2026-07-21 meeting set the operational cut at **6.8%**, noted
+  at the time as "the advisor's, not the ADA's 6.5%". That is reverted: the cut is **6.5%**, the ADA's
+  standard diagnostic threshold. The medication limb is unchanged — **both** limbs are still required
+  (`HbA1c ≥ 6.5% AND ≥ 1 glucose-lowering medication`).
+- **Reasoning:** 6.5% is the published diagnostic criterion, so it is the one a reviewer will expect
+  and the one that makes our diabetes prevalence comparable to every other cohort's. The 6.8% cut had
+  no external referent.
+- **Expected impact — directional, and it matters for reading old numbers:** the A1c limb is `≥`, so
+  **lowering the cut can only add people to `dm = TRUE`.** Every diabetes count produced before
+  2026-07-31 (e.g. the 77,436 ≈ 19% from the 2026-07-21 Workbench run, which was the *diagnosis-code*
+  definition anyway) is an **undercount** under the current definition. Do not put pre- and post-
+  revision counts in one table without labelling them. PREVENT takes diabetes as an input, so this
+  moves predicted risk **up** for anyone newly classified.
+- **Where it lives:** `configs/prevent_concepts.yaml: conditions.diabetes.hba1c_threshold` and
+  `.DM_A1C_THRESHOLD` in `src/phenotype/R/extract_prevent.R`. A test asserts the two agree, because a
+  config that describes a definition the code does not implement is worse than no config.
+- **Not affected:** the fixture. Its A1c values (8.0 and 7.2) clear both cuts, so the diabetes truth
+  table is unchanged — which also means the fixture does **not** guard this threshold. The explicit
+  `expect_equal(.DM_A1C_THRESHOLD, 6.5)` assertion is what does.
+- **Links:** D-016, T-003, `prevent_concepts.yaml`, meeting.md §"Decisions FROM the 2026-07-21 meeting".
+
+---
+
+## D-017 — A participant counts only if the complete PREVENT panel predates the event by **30 days**
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-31 (advisor, via the user)
+- **Context:** the panel is built from EHR measurements, and EHR measurements cluster around illness.
+  Lipids and a blood pressure drawn *during* an MI admission are a consequence of the event, not a
+  prediction of it. Requiring a 30-day gap between the complete panel and the event removes the worst
+  of that reverse causation.
+- **Decision:** the complete PREVENT panel must predate the incident event by **≥ 30 days**;
+  otherwise the participant is excluded. `configs/config.yaml: outcome.min_days_panel_to_event: 30`.
+- **How it is implemented, and why not literally:** read literally, the rule deletes cases whose panel
+  is too close to their event and touches nobody else. **That version is biased.** Those cases'
+  person-time in the first 30 days would stay in the denominator while their events left the
+  numerator, so every incidence rate would come out low — with no bug visible anywhere, which is the
+  A-001 failure shape. So it is implemented as a **symmetric blanking window**: nobody is at risk
+  until `baseline + 30 days`, and follow-up is measured from there. That reduces to the advisor's rule
+  exactly for cases, and it is *defined* for non-cases, which the literal reading is not (Q-S6).
+  Excluded participants get their own status, `excluded_short_interval`, and appear as a named row in
+  the attrition ladder rather than being absorbed into "not at risk".
+- **What it forced:** the rule is unenforceable against a most-recent-value panel, because for anyone
+  who had an event and stayed in care the most-recent value *post-dates* the event. So
+  `extract_prevent_panel()` gained `as_of=` (measurements on or before a date) and `panel_date` (the
+  date the panel became complete — the **latest** of the five required measurement dates). The
+  incidence figures now build the panel `as_of = landmark`.
+- **Expected impact:** shrinks the at-risk set and removes the events closest to baseline — the ones
+  most likely to be reverse-causal. Cost is measurable in one argument: `min_days_panel_to_event = 0`
+  reproduces the previous behaviour exactly, so "what did the rule cost us?" is a sensitivity
+  analysis, not an argument.
+- **Links:** D-016, Q-S6, A-001, T-019, T-020, `ascvd_status_at()`, `extract_prevent_panel()`.
+
+---
+
+## D-016 — **All three** ASCVD classes count as incident disease (chronic, acute, revascularisation)
+
+- **Status:** ACCEPTED
+- **Date:** 2026-07-31 (advisor, via the user)
+- **Context:** D-014 established the three classes and Q-A1 left open whether revascularisation counts
+  as an outcome; the code defaulted to `acute_event` only, with chronic codes used solely to establish
+  *prevalent* disease. The advisor has now settled it: **a chronic ASCVD diagnosis, an acute event,
+  and a revascularisation all count as incidence of ASCVD.** Q-A1 is resolved in favour of inclusion.
+- **Decision:** `outcome.incident_event_classes: [acute_event, chronic_disease, revascularisation]`.
+  The prevalent definition already used all three and is unchanged, so the rule simplifies to: **the
+  first ASCVD code of any class** — before baseline it makes you prevalent, after it, a case.
+- **What must not be lost:** the classes stay separately labelled on every row, and every result is
+  reported **both** ways. Two independent reasons, and the second is new:
+  1. Q-A1's original point stands — a revascularisation is a treatment decision confounded by
+     healthcare access, so a reviewer will ask what happens without it.
+  2. **The published PREVENT rate is a hard-outcome rate** (nonfatal MI, nonfatal stroke, CV death).
+     Only `acute_event` is comparable to it. Checking the broad outcome against the ~4.2/1000 PY
+     literature benchmark would flag a *correct* pipeline as contaminated — so
+     `check_incidence_vs_literature()` refuses that comparison outright rather than issuing a verdict
+     it cannot support (`outcome = "broad"` → `NOT COMPARABLE`).
+- **Expected impact:** the event count rises substantially — a first-ever chronic-IHD code is far more
+  common in EHR data than a first MI — and the cumulative-incidence curve rises with it. This is a
+  *definitional* increase, not a data finding, and every figure caption says so. Figure
+  `17_cumulative_incidence_broad_vs_acute.png` shows both curves on the same at-risk set, which is the
+  decision made visible instead of argued about.
+- **A caveat worth carrying to the next meeting:** a chronic-disease *code* dates a diagnosis, not an
+  onset. Someone can carry undiagnosed atherosclerosis for years and enter the data the day a
+  clinician writes it down — so the "event date" for chronic codes is partly a measure of healthcare
+  contact. This does not make the definition wrong (it is the advisor's call, and it captures real
+  disease the acute-only definition misses), but it is a limitation that belongs in the write-up, and
+  it interacts with A-015: people with sparse EHR get diagnosed later, or not at all.
+- **Links:** D-014, Q-A1 (resolved), D-017, T-015, T-020, `configs/config.yaml: outcome`.
+
+---
+
 ## D-015 — Age 30–79; the complete-panel skew is accepted and reported; event-time anchoring is deferred
 
 - **Status:** ACCEPTED

@@ -87,7 +87,7 @@ workbench_report <- function(con, outfile = NULL, require_smoking = TRUE, run_ev
                    pct = sprintf("%.1f%%", 100 * miss / n_panel)), row.names = FALSE)
   cat("\nbinary inputs (prevalence in the panel):\n")
   print(data.frame(
-    input = c("bp_tx (AHA antihypertensive)", "statin", "dm (A1c>=6.8 AND med)"),
+    input = c("bp_tx (AHA antihypertensive)", "statin", "dm (A1c>=6.5 AND med)"),
     n     = sup(c(sum(panel$bp_tx), sum(panel$statin), sum(panel$dm))),
     pct   = sprintf("%.1f%%", 100 * c(mean(panel$bp_tx), mean(panel$statin), mean(panel$dm)))),
     row.names = FALSE)

@@ -136,8 +136,21 @@ because the fixture currently contains almost none of the PREVENT variables.
   ingredients as the definition.
 
 ### T-016 — PREVENT in R, validated against the published literature
-- **Status:** BLOCKED · **Priority:** P1 · **Blocked by:** H-002 · **Depends on:** T-003
+- **Status:** **DONE 2026-07-30** (the validation gate; H-002's base-vs-extended choice is a separate
+  open decision, not a blocker on this) · **Priority:** P1 · **Depends on:** T-003
   · *(replaces the old T-006, which assumed a Python implementation)*
+- **Result:** `run_prevent()` (wrapping the official `AHAprevent`) reproduces **the published worked
+  example from Khan et al. 2024 to within the paper's own rounding** — eleven of twelve values, the
+  twelfth (30-yr HF, non-smoker: 18.48 vs a printed 19) on a rounding boundary and not on any analysis
+  path. `tests/testthat/test-prevent-published-example.R`, 10 assertions. Full suite: **230 pass, 0 fail.**
+- **The premise that blocked this was false.** The task notes and `test-prevent-crosscheck.R` both
+  recorded the paper as **paywalled**, so a two-package cross-check was built as a substitute. The full
+  text is **open at PMC10910659**. A week of the cleanest available validation gate was lost to an
+  unchecked assumption about access — the same failure shape as the T-012 "committed with outputs"
+  premise. Both cross-checks are kept: they fail for different reasons.
+- **Also delivered:** the paper's event rates (≈**4.2 ASCVD per 1000 person-years**, ages 30–79,
+  mean age 52.6) are transcribed into `configs/config.yaml: literature:` and turned into a runnable
+  smoke alarm, `src/ascvd/validation/literature_benchmarks.R` — see T-020.
 - **Why:** PREVENT is the baseline (D-004) and its linear predictor is the offset in the primary model
   (D-006). If the implementation is subtly wrong, **every result in the project is wrong**, and wrong
   in a way no downstream statistical care can detect.
@@ -148,6 +161,23 @@ because the fixture currently contains almost none of the PREVENT variables.
 - **Notes:** the advisor says the equations are already in R (which is what killed the Python half,
   D-011). **Borrowed code is not validated code** — whether we install `preventr`, use the advisor's
   code, or transcribe from the supplement, the published-worked-example test is the gate either way.
+
+### T-020 — Sanity-check the observed ASCVD incidence against the PREVENT literature
+- **Status:** **READY TO RUN** (code + band written and tested offline; needs one Workbench run)
+  · **Priority:** P0 · **Depends on:** T-015 · **Blocks:** any survival curve leaving the Workbench
+- **Why:** the equation being right says nothing about the *events*. Ascertainment could count chronic
+  IHD as incident MI, or miss two-thirds of real events to EHR capture gaps, and **the survival curve
+  would look completely normal either way** — smooth, monotone, plausibly shaped, and wrong. A rate
+  compared against a published rate is the cheapest defence that exists.
+- **Done when:** `check_incidence_from_status()` has been run on the real at-risk set and the observed
+  acute-ASCVD rate is reported next to the published **4.15–4.30 / 1000 PY**, with the verdict and, if
+  it misses the 4–12 band, the diagnosis of *which* defect (per-code counts from `workbench_report()`
+  Layer 2 distinguish CPT-929 over-capture from prevalent leakage).
+- **Expected:** ~6–7 per 1000 PY, ~2–4% cumulative incidence at 4.5 years on a ~70k at-risk set.
+  Reasoning, and the two failure signatures, in `docs/prevent_literature_benchmarks.md` §3.
+- **Notes:** also compute `observed 4.5-y incidence` vs `0.45 × mean predicted 10-yr risk`. That is the
+  first real look at **T-007 / DESIGN stage 5** (is PREVENT miscalibrated here?), which the entire
+  offset design (D-006) rests on. Expect over-prediction against under-ascertained EHR outcomes.
 
 ### T-019 — Event-time anchoring: define the baseline for non-cases — *later goal*
 - **Status:** DEFERRED (by decision — D-015) · **Priority:** P2 · **Blocks:** any survival model

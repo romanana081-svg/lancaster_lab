@@ -7,10 +7,11 @@
 # a grid of profiles rules out an implementation bug in either, and transitively ties our pipeline to
 # the AHA calculator that `preventr` was checked against.
 #
-# WHAT THIS DID NOT CLOSE: a directly-cited numeric worked example from Khan 2024 (Circulation) -- the
-# paper is paywalled and no open worked example with a full input profile was sourced. The two-package
-# agreement is the substitute; a one-profile manual check against the AHA online calculator is the
-# 2-minute human confirmation (see meeting.md S2).
+# WHAT THIS FILE DOES NOT COVER: the published worked example. That gap is now CLOSED elsewhere --
+# see test-prevent-published-example.R (added 2026-07-30). The paper turned out NOT to be paywalled:
+# the full text and its worked example are open at PMC10910659, which this file's original header
+# wrongly recorded as unavailable. Keep BOTH files: two packages agreeing proves they implement the
+# same equation; the published-example test proves ours matches the PAPER. Different failure modes.
 #
 # Both packages are off-CRAN/optional here, so these tests SKIP when either is absent rather than fail.
 

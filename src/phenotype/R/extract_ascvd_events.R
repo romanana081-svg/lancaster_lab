@@ -8,16 +8,20 @@
 # throws away the two things the advisor asked us to keep (D-014) -- WHEN the event happened and WHAT
 # TYPE/STAGE of disease it is.
 #
-# THE THREE CLASSES ARE NOT INTERCHANGEABLE (configs/ascvd_codes.yaml is the reviewable definition):
+# THE THREE CLASSES ARE STILL TRACKED SEPARATELY, BUT ALL THREE NOW COUNT AS THE OUTCOME
+# (advisor, 2026-07-31 — D-016; configs/ascvd_codes.yaml is the reviewable definition):
 #
 #   acute_event       — MI, acute ischemic events, ischemic stroke. A first-ever code here IS an event
-#                       date, and this is the outcome PREVENT predicts.
+#                       date. This is the HARD outcome, and the only one comparable to the published
+#                       PREVENT event rate.
 #   chronic_disease   — chronic IHD, angina, atherosclerosis, bypass-graft history. A first-ever code
-#                       here is a DIAGNOSIS date, not necessarily an event date. These are what make
-#                       someone PREVALENT and therefore excluded at baseline (D-013).
-#   revascularisation — PCI/CABG. A TREATMENT DECISION confounded by healthcare access, so the outcome
-#                       must be reportable BOTH WITH AND WITHOUT it (Q-A1). Never folded into
-#                       acute_event.
+#                       here is a DIAGNOSIS date, not necessarily an event date.
+#   revascularisation — PCI/CABG. A TREATMENT DECISION confounded by healthcare access (Q-A1).
+#
+# All three count both as PREVALENT disease at baseline (D-013, unchanged) and as INCIDENT disease
+# during follow-up (D-016, new). The classes are still carried on every row, so every result can be
+# reported with the broad definition AND with acute-only — which is not optional: the literature
+# benchmark only applies to acute-only, and the two definitions will not produce the same rate.
 #
 # WHY THE ANCHOR (Q-S6) DOES NOT APPEAR HERE, ON PURPOSE
 #
@@ -256,18 +260,28 @@ first_ascvd_event <- function(events, classes = "acute_event") {
 #' @param cohort   data.frame with `person_id` and a baseline date column.
 #' @param events   the frame from extract_ascvd_events().
 #' @param anchor_col      name of the baseline (T0) date column in `cohort`.
-#' @param event_classes   classes that count as an incident EVENT (default acute only).
-#' @param prevalent_classes classes that make someone PREVALENT at baseline (default: all three --
+#' @param event_classes   classes that count as an incident EVENT. ADVISOR DECISION 2026-07-31
+#'   (D-016): **all three**. A chronic ASCVD diagnosis, an acute event, and a revascularisation all
+#'   count as incidence of ASCVD. Pass `"acute_event"` explicitly for the hard-outcome sensitivity
+#'   analysis -- that is the one comparable to the published PREVENT rate.
+#' @param prevalent_classes classes that make someone PREVALENT at baseline (all three --
 #'   a revascularisation before baseline is unambiguous evidence of established disease).
 #' @param end_of_followup  the administrative censoring date (CDR cutoff). Required: without it,
 #'   event-free people have no follow-up time and no survival model is possible.
-#' @return `cohort` plus: ascvd_status ("prevalent"/"incident"/"event_free"), event_date,
-#'   event_class, event_code, followup_days, event (1/0 for the at-risk set, NA for prevalent).
+#' @param min_days_panel_to_event  ADVISOR DECISION 2026-07-31 (D-017): a participant counts only if
+#'   their complete PREVENT panel predates the event by at least this many days. Default 30. See the
+#'   note below on why this is implemented as a symmetric blanking window rather than a filter on
+#'   cases; set to 0 to disable.
+#' @return `cohort` plus: ascvd_status ("prevalent"/"excluded_short_interval"/"incident"/
+#'   "event_free"), event_date, event_class, event_code, risk_start_date, followup_days,
+#'   event (1/0 for the at-risk set, NA for everyone excluded).
 ascvd_status_at <- function(cohort, events, anchor_col = "baseline_date",
-                           event_classes = "acute_event",
+                           event_classes = c("acute_event", "chronic_disease",
+                                             "revascularisation"),
                            prevalent_classes = c("acute_event", "chronic_disease",
                                                  "revascularisation"),
-                           end_of_followup = NULL) {
+                           end_of_followup = NULL,
+                           min_days_panel_to_event = 30) {
   stopifnot(is.data.frame(cohort), "person_id" %in% names(cohort))
   if (!anchor_col %in% names(cohort))
     stop(sprintf("ascvd_status_at(): cohort has no column `%s`. The baseline anchor (Q-S6) must be
@@ -298,11 +312,38 @@ ascvd_status_at <- function(cohort, events, anchor_col = "baseline_date",
   # the baseline date itself is not an event we could have predicted from that day's labs.
   prevalent <- !is.na(out$any_ascvd_first_date) & out$any_ascvd_first_date <= out$baseline_date
 
-  # INCIDENT: a qualifying event strictly AFTER baseline, within follow-up.
-  incident <- !prevalent & !is.na(out$event_date) &
-              out$event_date > out$baseline_date & out$event_date <= end_of_followup
+  # --- the 30-day rule (D-017) ---------------------------------------------------------------------
+  # The advisor's rule: a person counts only if their complete PREVENT panel predates the event by at
+  # least 30 days. Its purpose is to stop the panel being measured BY the event -- lipids and a BP
+  # drawn during an MI admission are a consequence of the disease, not a prediction of it.
+  #
+  # WHY A BLANKING WINDOW AND NOT A FILTER ON CASES. Read literally, the rule removes cases whose
+  # panel is too close to their event and touches nobody else. But the person-time those cases
+  # contributed in that first 30 days would still sit in the denominator, so events would be deleted
+  # while their exposure time was kept -- every incidence rate biased DOWN, with no bug visible
+  # anywhere. The fix is to move the clock rather than only the numerator: NOBODY is at risk until
+  # baseline + 30 days, so the removed events and the removed person-time are the same 30 days. That
+  # is the symmetric reading, it reduces to the advisor's rule exactly for cases, and it is well
+  # defined for the non-cases the literal reading says nothing about (the Q-S6 asymmetry trap, A-001).
+  stopifnot(is.numeric(min_days_panel_to_event), length(min_days_panel_to_event) == 1,
+            min_days_panel_to_event >= 0)
+  risk_start <- out$baseline_date + min_days_panel_to_event
 
-  out$ascvd_status <- ifelse(prevalent, "prevalent", ifelse(incident, "incident", "event_free"))
+  # Excluded: an event inside the blanking window. NOT prevalent (the disease came after baseline) and
+  # NOT at risk (we cannot claim the panel predates it by the required margin) -- so it is its own
+  # status, and it is COUNTED rather than quietly dropped, because it is an attrition number the
+  # advisor will ask for.
+  short <- !prevalent & !is.na(out$event_date) &
+           out$event_date > out$baseline_date & out$event_date <= risk_start
+
+  # INCIDENT: a qualifying event strictly after the blanking window, within follow-up.
+  incident <- !prevalent & !short & !is.na(out$event_date) &
+              out$event_date > risk_start & out$event_date <= end_of_followup
+
+  out$risk_start_date <- risk_start
+  out$ascvd_status <- ifelse(prevalent, "prevalent",
+                      ifelse(short, "excluded_short_interval",
+                      ifelse(incident, "incident", "event_free")))
 
   # An incident case's own event date is not the outcome date if it precedes baseline -- already
   # handled above -- but an event AFTER the CDR cutoff must not be counted either, so blank it.
@@ -310,21 +351,25 @@ ascvd_status_at <- function(cohort, events, anchor_col = "baseline_date",
   out$event_class[!incident] <- NA_character_
   out$event_code[!incident]  <- NA_character_
 
+  # Follow-up is measured from risk_start, not from baseline: the blanking window is time nobody was
+  # observed at risk, so counting it as exposure would dilute every rate by exactly the amount the
+  # rule was supposed to leave untouched.
   out$followup_days <- ifelse(
-    out$ascvd_status == "incident", as.numeric(out$event_date - out$baseline_date),
-    ifelse(out$ascvd_status == "event_free", as.numeric(end_of_followup - out$baseline_date), NA))
-  # Prevalent people are not in the at-risk set at all, so `event` is NA rather than 0: coding them 0
-  # would silently add them to the denominator of every incidence rate.
+    out$ascvd_status == "incident", as.numeric(out$event_date - risk_start),
+    ifelse(out$ascvd_status == "event_free", as.numeric(end_of_followup - risk_start), NA))
+  # Prevalent and short-interval people are not in the at-risk set at all, so `event` is NA rather
+  # than 0: coding them 0 would silently add them to the denominator of every incidence rate.
   out$event <- ifelse(out$ascvd_status == "incident", 1L,
                       ifelse(out$ascvd_status == "event_free", 0L, NA_integer_))
 
-  # A negative follow-up time means the anchor is after the CDR cutoff -- a data or config error, not
-  # something to average over.
+  # A negative follow-up time means the risk-start date is after the CDR cutoff -- a data or config
+  # error, not something to average over. Note risk_start = baseline + min_days_panel_to_event, so a
+  # baseline within 30 days of the cutoff now trips this where it previously would not have.
   bad <- !is.na(out$followup_days) & out$followup_days < 0
   if (any(bad))
-    warning(sprintf(paste0("ascvd_status_at(): %d participant(s) have NEGATIVE follow-up (baseline
-  after end_of_followup = %s). Check the anchor, not the events."), sum(bad), end_of_followup),
-            call. = FALSE)
+    warning(sprintf(paste0("ascvd_status_at(): %d participant(s) have NEGATIVE follow-up (risk start
+  = baseline + %d days is after end_of_followup = %s). Check the anchor, not the events."),
+                    sum(bad), min_days_panel_to_event, end_of_followup), call. = FALSE)
 
   out
 }

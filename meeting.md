@@ -149,13 +149,19 @@ authored; its docs report validation against the AHA online PREVENT calculator).
   **advisor question** (§4) before any 30-year result is reported. The test pins this boundary so it
   can't drift silently.
 
-**What this did NOT close:** a *directly-cited* numeric worked example from Khan 2024 (Circulation) —
-the paper is paywalled and no open full-profile worked example was sourced. The two-implementation
-agreement is the substitute. **The 2-minute human confirmation:** enter one profile into the AHA online
-calculator (professional.heart.org PREVENT calculator, "base" model) and check it against
-`AHAprevent::prevent_base` for the same profile. Suggested profile (matches the packages' documented
-example): 45 y/o female, TC 200, HDL 60, SBP 120, on no BP meds, diabetes, non-smoker, BMI 25,
-eGFR 95, no statin → **10-yr ASCVD ≈ 2.1%, 30-yr ASCVD ≈ 12.0%**. If the calculator agrees, done.
+**~~What this did NOT close~~ — CLOSED 2026-07-30.** This section previously said the published worked
+example could not be sourced because "the paper is paywalled". **That was wrong.** The Khan 2024 full
+text is **open at PMC10910659**, worked example and Table 1 included. The example is now a test:
+
+> 50-y/o female, TC 240, HDL 55, no statin, **treated** SBP 160, no diabetes, BMI 35, eGFR 90.
+> Published 10-yr CVD/ASCVD/HF = 5.4 / 3.6 / 2.5%; as a smoker 9.3 / 6.0 / 4.7%;
+> 30-yr = 31 / 20 / 19% and 40 / 26 / 26%.
+
+`run_prevent()` returns **5.43 / 3.64 / 2.53**, **9.26 / 5.99 / 4.70**, **30.67 / 19.86 / 18.48** and
+**39.76 / 25.91 / 26.09** — eleven of twelve inside the paper's own rounding, the twelfth (30-yr HF,
+non-smoker) on a rounding boundary and not on any analysis path. Pinned in
+`tests/testthat/test-prevent-published-example.R`. **VALIDATION layer 3 is satisfied** and the manual
+AHA-calculator check is no longer needed. Details: `docs/prevent_literature_benchmarks.md`.
 
 **Model variant still open (H-002):** base vs extended (extended adds HbA1c / UACR / SDI). We validated
 the **base** model. Which variant we use is an advisor decision and it changes the required panel — an
