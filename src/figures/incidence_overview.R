@@ -389,8 +389,14 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
     message("skipping figure 16: no PREVENT risk column (is run_prevent.R sourced and AHAprevent installed?).")
   }
 
+  # Read the two numbers by MEANING, not by row position. D-017 inserted two rows into `counts`
+  # (prevalent, short-interval) and this line kept its old indices, so it had been reporting the
+  # prevalent count as "at-risk N" and the short-interval exclusions as "events" -- a wrong summary
+  # printed confidently at the end of a run nobody would re-derive by hand.
+  n_at_risk <- sum(fr$at_risk$ascvd_status %in% c("event_free", "incident"))
+  n_events  <- sum(fr$at_risk$ascvd_status == "incident")
   message(sprintf("incidence figures written to %s/ | at-risk N = %s, incident events = %s",
-                  outdir, fmt(fr$counts$n[3]), fmt(fr$counts$n[4])))
+                  outdir, fmt(n_at_risk), fmt(n_events)))
   invisible(fr)
 }
 

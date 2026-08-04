@@ -179,6 +179,26 @@ because the fixture currently contains almost none of the PREVENT variables.
   first real look at **T-007 / DESIGN stage 5** (is PREVENT miscalibrated here?), which the entire
   offset design (D-006) rests on. Expect over-prediction against under-ascertained EHR outcomes.
 
+### T-021 — Preliminary survival curves, in one call
+- **Status:** **READY TO RUN** (written, validated offline end-to-end 2026-08-04; needs one Workbench
+  run) · **Priority:** P0 · **Depends on:** T-015 · **Paired with:** T-020 (same run produces both)
+- **Why:** the curves already existed inside `make_incidence_figures()`, but producing them required
+  knowing the landmark, the CDR cutoff, and which figure depends on which unresolved question. That is
+  three chances to get it wrong under time pressure, and one of them — a landmark earlier than most
+  people's measurements — fails with a **correct-looking error** rather than a wrong number, which is
+  the good case. `run_survival_curves()` collapses it to one call that derives the cutoff, searches for
+  a landmark that actually yields a cohort, prints every candidate it tried, and emits the numbers
+  behind the curves rather than only the pictures.
+- **Done when:** run in the Workbench and (a) the acute-outcome literature check returns `PLAUSIBLE`,
+  (b) `14/15/17` are written on a non-zero event count, (c) the readout file comes back out with every
+  cell ≥ 20.
+- **Runbook:** [`docs/workbench_survival_runbook.md`](docs/workbench_survival_runbook.md).
+- **Notes:** this is the **landmark** cohort, deliberately — a KM curve needs a common time origin, and
+  the case-anchored design (D-019) has none. Both are live and they answer different questions; do not
+  put a survival curve on the case-anchored cohort. Preliminary in four named ways (death not modelled,
+  ICD10CM-only, censoring at the CDR cutoff rather than last contact, Q-S6 open), all printed with the
+  readout so they reach the slide.
+
 ### T-019 — Event-time anchoring: define the baseline for non-cases — *later goal*
 - **Status:** DEFERRED (by decision — D-015) · **Priority:** P2 · **Blocks:** any survival model
   (T-007, T-009)

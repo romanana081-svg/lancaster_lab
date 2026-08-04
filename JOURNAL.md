@@ -22,6 +22,48 @@ a dead end that is not written down gets explored twice.
 
 ---
 
+## 2026-08-04 (local) — a one-call survival run, and two bugs the offline validation caught
+
+**Did:** Wrote `src/figures/survival_curves.R` (T-021) — `run_survival_curves()`, which does the whole
+preliminary survival run in one call: derives `end_of_followup` from the CDR, searches for a landmark
+that actually yields a cohort, writes the figures, prints cumulative incidence at 1–5 years with
+confidence intervals, runs the literature check both ways, and writes a paste-able readout. Runbook in
+`docs/workbench_survival_runbook.md`. Validated end-to-end against the fixture; testthat 298/0.
+
+**Learned — the driver was worth writing mostly because writing it found things:**
+
+1. **The offline entry point of `incidence_overview.R` had been broken since the D-017 commit.** The
+   `as_of = landmark` change means the panel is built *as of* the landmark, so the fixture's hardcoded
+   2015-01-01 landmark now yields **zero** complete panels and the script dies. Nobody had re-run it.
+   This is the good failure mode — a loud error, not a wrong number — but it means the survival figures
+   `14/15/17` had **never actually been generated**, offline or anywhere: `reports/figures_fixture_demo/`
+   stopped at `13`. The curve-writing path was unexercised code.
+
+2. **A stale row index was printing a confidently wrong summary.** `make_incidence_figures()` ended with
+   `at-risk N = counts$n[3], events = counts$n[4]`. D-017 had inserted two rows into `counts`, so those
+   indices had silently become *prevalent* and *short-interval exclusions*. The run-completion line — the
+   one number a person reads and repeats — was reporting `at-risk N = 5, incident events = 0` where the
+   truth was `82` and `6`. Fixed by indexing on meaning rather than position, which is the actual lesson:
+   positional indexing into a frame whose rows are a *decision record* will break every time a decision
+   is added, and it breaks quietly.
+
+3. **The literature check has an `outcome` argument, and passing the acute frame is not enough.** My
+   first version passed `at_risk_acute` while leaving `outcome` at its `"broad"` default; the checker
+   dutifully replied `NOT COMPARABLE`, which is a *correct* answer to a question I hadn't meant to ask.
+   The one comparison the whole T-020 gate exists for would have silently returned a non-answer. Now
+   both outcomes are checked explicitly and both are printed.
+
+**Also:** the fixture's 4 complete panels are too few to carry an event, so the offline demo runs with
+`scorable_only = FALSE` — a fixture-only setting that would be wrong in the Workbench, commented as such
+at the call site.
+
+**Decided:** no new D-entries. T-021 opened, READY TO RUN.
+
+**Next:** run `run_survival_curves()` in the Workbench. It produces the T-020 evidence in the same run,
+so both close together — provided the acute check comes back `PLAUSIBLE`.
+
+---
+
 ## 2026-07-20 (local) — push the measurement cleaning into SQL so the extractor scales to the CDR
 
 **Did:** Rewrote the measurement block of `extract_prevent_panel()` so the bounding, the
