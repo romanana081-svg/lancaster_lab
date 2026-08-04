@@ -153,6 +153,8 @@ hypertension").
 
 | Symptom | Cause / fix |
 |---|---|
+| `unused argument (min_days_panel_to_event = ...)` | a **stale session**, not a bug in the call. An R session in the Workbench outlives a `git pull`, so functions from an older checkout stay defined and look fine. `run_survival_curves()` now re-sources every time and refuses to run on an old `make_incidence_figures()`, naming the cause. If you see it anyway: `git pull` in the Terminal, then restart R. |
+| `make_incidence_figures() is an OLD version` | the guard above, working. The file on disk is behind — pull, and check `git log --oneline -1`. |
 | `NOBODY has a complete panel as of the <date> landmark` | landmark too early. `run_survival_curves()` with no `landmark` avoids this automatically — it searches. |
 | `choose_landmark(): no candidate landmark yields >= 200 complete panels` | check `derive_end_of_followup()` first; then `sql/02`. Don't just lower `min_n`. |
 | `the survival package is not installed` | `install.packages("survival")` |

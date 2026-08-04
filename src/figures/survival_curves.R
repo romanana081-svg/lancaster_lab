@@ -178,6 +178,13 @@ km_at <- function(at_risk, times = c(1, 2, 3, 4, 5), group = NULL) {
 #' @param landmark,end_of_followup  NULL to derive them (and report the derivation).
 #' @param outdir  where the PNGs go.
 #' @param copy_to_bucket  gsutil the PNGs to WORKSPACE_BUCKET/figures/ when running in the Workbench.
+#' @param refresh  re-source the pipeline files even if they appear to be loaded already. TRUE by
+#'   default, and it is the default for a reason: an R session in the Workbench is long-lived and
+#'   survives a `git pull`, so functions defined from an OLDER checkout stay in the global environment
+#'   looking perfectly present. Guarding on `exists()` asks "is it defined?" when the question is "is
+#'   it CURRENT?" -- and the failure is an `unused argument` error pointing at a call site that is
+#'   correct, which sends you looking in the wrong file. Set FALSE only if you have deliberately
+#'   modified one of these functions in-session and want to keep your version.
 #' @return list(frame, km, km_acute, km_by_sex, landmark, end_of_followup, summary_path)
 run_survival_curves <- function(con = NULL, outdir = "figures",
                                 landmark = NULL, end_of_followup = NULL,
@@ -185,8 +192,19 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
                                 min_days_panel_to_event = 30,
                                 scorable_only = TRUE,
                                 horizons = c(1, 2, 3, 4, 5),
-                                copy_to_bucket = TRUE) {
-  if (!exists("make_incidence_figures", mode = "function")) source_survival_deps()
+                                copy_to_bucket = TRUE, refresh = TRUE) {
+  if (isTRUE(refresh) || !exists("make_incidence_figures", mode = "function"))
+    source_survival_deps(quiet = TRUE)
+  # Fail on a STALE signature with a message that names the cause. Without this the symptom is
+  # `unused argument (min_days_panel_to_event = ...)` raised inside make_incidence_figures(), which
+  # reads as a bug in the caller rather than as a stale definition, and costs ten minutes of reading
+  # a call site that is correct.
+  if (!"min_days_panel_to_event" %in% names(formals(make_incidence_figures)))
+    stop("make_incidence_figures() is an OLD version — it has no `min_days_panel_to_event` argument
+  (added with D-017). The file on disk is behind. In the Workbench TERMINAL tab:
+      cd ~/lancaster_lab && git pull && git log --oneline -1
+  then re-run. If the pull is current, something else in the session is masking it: restart R.",
+         call. = FALSE)
   own_con <- FALSE
   if (is.null(con)) { con <- connect_cdr(); own_con <- TRUE
                       on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE) }
