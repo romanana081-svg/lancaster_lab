@@ -110,6 +110,48 @@ system(paste0("gsutil -m cp figures/*.png ", Sys.getenv("WORKSPACE_BUCKET"), "/f
 
 ---
 
+## Step 3b — the figures comparable to the PREVENT validation paper
+
+The paper validates PREVENT with **calibration plots**: predicted risk on x, observed on y, one point
+per decile, a 45° reference line, stratified by sex. That is the figure to put beside theirs.
+
+```r
+source("src/figures/prevent_calibration.R")
+cal <- make_prevent_calibration_figures(res)     # `res` from Step 1
+```
+
+| File | What it is |
+|---|---|
+| `18_km_by_prevent_risk.png` | KM curves by predicted-risk group — the *survival-curve* form. Curves should separate in order; that separation **is** discrimination. |
+| `19_calibration_observed_vs_predicted.png` | the paper's figure. Points **below** the diagonal = PREVENT over-predicts. |
+| `20_calibration_by_sex.png` | same, faceted by sex — PREVENT is sex-specific and a pooled plot can hide opposite-direction miscalibration. |
+
+Three things this does differently from `16_observed_by_prevent_risk_PROVISIONAL`, each of which
+would otherwise manufacture the very over-prediction the figure is testing for:
+
+1. **Observed is Kaplan–Meier, not `events/N`.** A crude proportion counts everyone censored early as
+   a non-event, understating observed risk — which reads as over-prediction by PREVENT. Figure 16 uses
+   the crude proportion; these do not.
+2. **The horizons are matched.** PREVENT predicts 10 years, we observe ~4–5. Predicted is converted to
+   the observation horizon by `p_t = 1-(1-p10)^(t/10)`, and both axes are labelled with the horizon.
+   Comparing 4.5-year observed to 10-year predicted is a units error that looks like a finding.
+3. **Deciles are cut *within* sex** for figure 20, not pooled — a pooled cut puts most women in the low
+   deciles and most men in the high ones, so each "decile" becomes mostly one sex.
+
+**Harrell's C is printed alongside** (`cal$concordance`), because the paper reports C-statistics and it
+is the one number the horizon mismatch cannot distort — concordance uses only the *ordering* of
+predicted risk. When calibration is muddy, C is still clean. Report it.
+
+Defaults worth knowing: `outcome = "acute"` (the paper's outcome is a hard outcome, so this is the
+honest comparison — the opposite default from the incidence figures), and the horizon is the largest
+whole year that 75% of people actually reach, so the top decile's KM estimate isn't resting on a
+handful of people.
+
+If it warns `NO calibration figures written` — nobody has both a PREVENT risk and follow-up. PREVENT
+returns `NA` unless *every* input is present, so check `scorable_only` and the `bp_tx` / smoking inputs.
+
+---
+
 ## Step 4 — bring the readout out
 
 ```r

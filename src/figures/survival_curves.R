@@ -298,10 +298,28 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
   close(con_out)
   say("\nreadout written to %s  <- paste this back", summary_path)
 
-  if (isTRUE(copy_to_bucket) && nzchar(Sys.getenv("WORKSPACE_BUCKET"))) {
-    cmd <- sprintf("gsutil -m cp %s/*.png %s/figures/", outdir, Sys.getenv("WORKSPACE_BUCKET"))
-    say("copying figures to the bucket: %s", cmd)
-    try(system(cmd, intern = TRUE), silent = TRUE)
+  # Copy to the bucket, but only if WORKSPACE_BUCKET is a REAL bucket name. A placeholder like
+  # "gs://fc-secure-..." (an ellipsis pasted from documentation) sails past a nzchar() check and then
+  # fails 12 times inside gsutil with `400 Invalid bucket name` -- a wall of red at the end of an
+  # otherwise successful run, which reads as "the run failed" when the figures are sitting on disk
+  # perfectly fine. Check the shape first and say where the files actually are either way.
+  bucket <- Sys.getenv("WORKSPACE_BUCKET")
+  if (isTRUE(copy_to_bucket)) {
+    looks_real <- nzchar(bucket) && grepl("^gs://[a-z0-9][a-z0-9._-]{2,}$", bucket) &&
+                  !grepl("\\.\\.\\.", bucket)
+    if (!looks_real) {
+      say("\nNOT copying to a bucket: WORKSPACE_BUCKET is %s.",
+          if (!nzchar(bucket)) "unset" else sprintf("'%s', which is not a valid bucket name", bucket))
+      say("  The figures are on disk at %s/ — download them from the Workbench file browser.",
+          normalizePath(outdir, winslash = "/", mustWork = FALSE))
+      say("  To fix the variable: Sys.setenv(WORKSPACE_BUCKET = \"gs://<your-real-bucket>\")")
+    } else {
+      cmd <- sprintf("gsutil -m cp %s/*.png %s/figures/", outdir, bucket)
+      say("copying figures to the bucket: %s", cmd)
+      ok <- tryCatch({ system(cmd); TRUE }, error = function(e) FALSE)
+      if (!isTRUE(ok))
+        say("  copy failed — the figures are still on disk at %s/.", outdir)
+    }
   }
 
   invisible(list(frame = fr, km = km, km_acute = km_acute, km_by_sex = km_sex,
