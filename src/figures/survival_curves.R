@@ -246,6 +246,10 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
 
   say("\n=== 3. attrition ===")
   print(fr$counts)
+  # Print the scoring status HERE, before any calibration step is attempted. If PREVENT did not score,
+  # the run is still fine for the incidence figures and the failure is two steps away -- knowing it
+  # now is the difference between fixing it in-session and re-running the whole cohort.
+  if (!is.null(fr$prevent_source)) say("\nPREVENT: %s", fr$prevent_source)
 
   km       <- km_at(fr$at_risk,       horizons)
   km_acute <- km_at(fr$at_risk_acute, horizons)

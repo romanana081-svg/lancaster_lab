@@ -44,10 +44,37 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 
 .find_risk_col <- function(d) {
   hit <- intersect(.RISK_COLS, names(d))
-  if (!length(hit))
-    stop("no PREVENT risk column found (looked for: ", paste(.RISK_COLS, collapse = ", "),
-         "). Is AHAprevent installed and run_prevent.R sourced?", call. = FALSE)
-  hit[1]
+  if (length(hit)) return(hit[1])
+
+  # FALL BACK TO A PATTERN before giving up. The exact column name is whatever
+  # AHAprevent::prevent_base() names its output element -- a package detail we do not control and
+  # have never verified against an installed copy, because every test that touches AHAprevent skips
+  # when it is absent, which it is on the development machine. A capitalisation change there would
+  # otherwise take down every calibration output with a message blaming the installation.
+  loose <- grep("ascvd", grep("10.?y(ea)?r", names(d), ignore.case = TRUE, value = TRUE),
+                ignore.case = TRUE, value = TRUE)
+  if (length(loose)) {
+    message("using '", loose[1], "' as the PREVENT 10-year ASCVD risk column (matched by pattern, ",
+            "not by exact name -- if AHAprevent renamed its output, add it to .RISK_COLS).")
+    return(loose[1])
+  }
+
+  # No column at all. Say which of the three causes it is rather than asking about the installation,
+  # which is the least likely of them once anyone has got this far.
+  near <- grep("prevent|ascvd|risk", names(d), ignore.case = TRUE, value = TRUE)
+  stop(sprintf("no PREVENT risk column found (looked for: %s, then any name matching 10yr + ascvd).
+  Columns present that look related: %s
+  The panel was NOT SCORED. In order of likelihood:
+    1. run_prevent() was not sourced when the cohort was built -- build_incidence_frame() skips
+       scoring silently in that case. Check res$frame$prevent_source; it now records the reason.
+    2. run_prevent() errored during the run (look back for a warning naming it).
+    3. AHAprevent is genuinely absent: requireNamespace('AHAprevent', quietly = TRUE).
+  You do NOT need to re-run the cohort to fix this. Score the frames you already have:
+    source('src/ascvd/prevent/run_prevent.R')
+    res$frame$at_risk       <- run_prevent(res$frame$at_risk)
+    res$frame$at_risk_acute <- run_prevent(res$frame$at_risk_acute)",
+               paste(.RISK_COLS, collapse = ", "),
+               if (length(near)) paste(near, collapse = ", ") else "(none)"), call. = FALSE)
 }
 
 #' Convert a 10-year risk to the observation horizon, assuming a constant hazard.

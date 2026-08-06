@@ -116,9 +116,36 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
   }
 
   # Score PREVENT if the equation and package are available (figure 6 needs it; the rest do not).
-  if (requireNamespace("AHAprevent", quietly = TRUE) && exists("run_prevent", mode = "function")) {
-    panel <- tryCatch(run_prevent(panel), error = function(e) { warning(conditionMessage(e)); panel })
+  #
+  # RECORD WHY IF IT DOES NOT HAPPEN. This block used to fail silently in three different ways -- the
+  # package missing, run_prevent() not sourced, or the call erroring -- all of which left the panel
+  # unscored and let the run continue looking healthy. The failure then surfaced hundreds of lines
+  # later, in a different file, as "no PREVENT risk column found ... Is AHAprevent installed?" -- a
+  # question with the wrong answer, since the usual cause is one of the other two. The reason now
+  # travels with the frame and gets printed by run_survival_curves().
+  prevent_source <- NULL
+  if (!requireNamespace("AHAprevent", quietly = TRUE)) {
+    prevent_source <- "NOT SCORED: the AHAprevent package is not installed in this R session"
+  } else if (!exists("run_prevent", mode = "function")) {
+    prevent_source <- "NOT SCORED: run_prevent() is not defined -- source('src/ascvd/prevent/run_prevent.R')"
+  } else {
+    scored <- tryCatch(run_prevent(panel),
+                       error = function(e) { warning("run_prevent() failed: ", conditionMessage(e),
+                                                     call. = FALSE); NULL })
+    if (is.null(scored)) {
+      prevent_source <- "NOT SCORED: run_prevent() errored -- see the warning above"
+    } else {
+      added <- setdiff(names(scored), names(panel))
+      panel <- scored
+      prevent_source <- if (!length(added))
+        "NOT SCORED: run_prevent() returned no new columns" else
+        sprintf("scored by AHAprevent %s -> %s",
+                as.character(utils::packageVersion("AHAprevent")), paste(added, collapse = ", "))
+    }
   }
+  if (grepl("^NOT SCORED", prevent_source))
+    message("PREVENT ", prevent_source, "\n  Figures 16 and every calibration output need it; the ",
+            "incidence figures do not.")
 
   # When smoking is attached it becomes a REQUIRED input (decision 2026-07-30): anyone with no survey
   # answer is dropped from the at-risk set entirely, not merely left NA to fall out of the scored
@@ -181,7 +208,8 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
 
   list(events = events, cohort = cohort, at_risk = at_risk, at_risk_acute = at_risk_acute,
        acute = acute, counts = counts, landmark = landmark, end_of_followup = end_of_followup,
-       smoking_source = smoking_source, min_days_panel_to_event = min_days_panel_to_event)
+       smoking_source = smoking_source, prevent_source = prevent_source,
+       min_days_panel_to_event = min_days_panel_to_event)
 }
 
 #' Observed cumulative incidence after the landmark (Kaplan-Meier complement).
