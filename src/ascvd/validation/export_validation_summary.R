@@ -171,7 +171,13 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
   }
   if (!is.null(cal)) { emit_c(cal$concordance); emit_c(cal$concordance_by_sex) }
   else add("  (calibration object not supplied)")
-  add("  published: ~0.79 women / ~0.78 men (10-yr ASCVD). Ours is expected LOWER -- shorter")
+  # CORRECTED 2026-08-06 (T-024): this line read "~0.79 women / ~0.78 men" for ASCVD. Those are the
+  # paper's TOTAL CVD numbers (0.794 / 0.757); its ASCVD figures are 0.774 and 0.736, which is what
+  # config.yaml has carried all along. The error made our C look worse against the benchmark than it
+  # is -- and for men by nearly 0.05, which is most of the gap this section exists to explain.
+  add("  published (Table 4, ASCVD, external validation): 0.774 women / 0.736 men -- and those are")
+  add("  MEDIANS across 21 cohorts, IQI 0.743-0.788 and 0.710-0.755, i.e. a spread BETWEEN")
+  add("  populations rather than a confidence interval. Ours is expected LOWER still: shorter")
   add("  follow-up, narrower age range, noisier EHR outcomes all compress C. 0.70-0.75 here is")
   add("  CONSISTENT with the paper, not a contradiction.")
 
