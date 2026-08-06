@@ -43,6 +43,28 @@
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
+# The disclosure threshold, resolved AT CALL TIME rather than baked into a default argument.
+#
+# These functions used to default to `min_cell = .MIN_CELL`, a constant owned by
+# export_validation_summary.R. An R default argument is a promise evaluated in the caller's function
+# frame when it is first forced -- so that spelling reaches across files for a symbol at CALL time,
+# and any session where the constant is not visible in the search path fails with
+# `object '.MIN_CELL' not found` at the moment of use, long after the source() that should have
+# provided it. The tables then break for a reason that has nothing to do with tables.
+#
+# Resolving it through a function keeps the single source of truth (export_validation_summary.R's
+# value wins when it is loaded) while making these functions callable on their own. The 20-person
+# floor is policy, so a lower value found elsewhere is raised rather than honoured.
+.PT_MIN_CELL_FLOOR <- 20L
+.pt_min_cell <- function() {
+  v <- tryCatch(if (exists(".MIN_CELL", inherits = TRUE)) get(".MIN_CELL", inherits = TRUE)
+                else .PT_MIN_CELL_FLOOR,
+                error = function(e) .PT_MIN_CELL_FLOOR)
+  v <- suppressWarnings(as.integer(v))
+  if (!length(v) || is.na(v)) v <- .PT_MIN_CELL_FLOOR
+  max(v, .PT_MIN_CELL_FLOOR)
+}
+
 # Cholesterol only. The paper prints mmol/L; All of Us measures mg/dL. Conversion runs in this
 # direction on purpose — OURS is converted up into the paper's units, and the transcribed reference
 # block is never rewritten, so every cell in the paper column stays quotable against the printed page.
@@ -232,7 +254,7 @@ calibration_slope <- function(cal_tbl, min_groups = 5) {
 #'   Only affects the event-count rows; the covariate rows come from the same at-risk set either way.
 #' @param min_cell disclosure threshold.
 #' @return data.frame of formatted character columns, with a `notes` attribute.
-make_paper_table1 <- function(res, events_from = c("acute", "broad"), min_cell = .MIN_CELL,
+make_paper_table1 <- function(res, events_from = c("acute", "broad"), min_cell = .pt_min_cell(),
                               path = .PT_CONFIG_DEFAULT) {
   events_from <- match.arg(events_from)
   fr <- if (is.data.frame(res)) NULL else (res$frame %||% res)
@@ -365,7 +387,7 @@ make_paper_table1 <- function(res, events_from = c("acute", "broad"), min_cell =
 #' @param res the list from run_survival_curves() (used only for labelling).
 #' @param cal the list from make_prevent_calibration_figures(). Required — this table IS its numbers.
 #' @return data.frame of formatted character columns, with `notes` and `raw` attributes.
-make_paper_table4 <- function(res, cal, min_cell = .MIN_CELL, path = .PT_CONFIG_DEFAULT) {
+make_paper_table4 <- function(res, cal, min_cell = .pt_min_cell(), path = .PT_CONFIG_DEFAULT) {
   if (is.null(cal))
     stop("make_paper_table4(): `cal` is required — run make_prevent_calibration_figures(res) first.
   Without it there is no C-statistic and no calibration table to take a slope from.", call. = FALSE)
@@ -514,7 +536,7 @@ make_paper_table4 <- function(res, cal, min_cell = .MIN_CELL, path = .PT_CONFIG_
 #'
 #' @return invisibly, list(table1, table4, text, path).
 render_paper_tables <- function(res, cal = NULL, outdir = "reports", events_from = "acute",
-                                min_cell = .MIN_CELL, path = .PT_CONFIG_DEFAULT) {
+                                min_cell = .pt_min_cell(), path = .PT_CONFIG_DEFAULT) {
   t1 <- make_paper_table1(res, events_from = events_from, min_cell = min_cell, path = path)
   t4 <- tryCatch(make_paper_table4(res, cal, min_cell = min_cell, path = path),
                  error = function(e) { message("Table 4 skipped: ", conditionMessage(e)); NULL })

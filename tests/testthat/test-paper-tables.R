@@ -142,6 +142,33 @@ fake_at_risk <- function(n_female = 60, n_male = 50, seed = 7) {
     stringsAsFactors = FALSE)
 }
 
+test_that("the tables work in a session where .MIN_CELL was never defined", {
+  # The regression this guards: `min_cell = .MIN_CELL` as a default argument is a promise forced in
+  # the caller's frame at CALL time, reaching across files for a symbol owned by
+  # export_validation_summary.R. In a session where that symbol is not on the search path, the tables
+  # died with `object '.MIN_CELL' not found` -- at the moment of use, nowhere near the source() that
+  # should have supplied it. Simulate that session by hiding the symbol.
+  stashed <- get(".MIN_CELL", inherits = TRUE)
+  rm(".MIN_CELL", envir = globalenv())
+  on.exit(assign(".MIN_CELL", stashed, envir = globalenv()), add = TRUE)
+
+  expect_equal(.pt_min_cell(), 20L)
+  t1 <- make_paper_table1(fake_at_risk())
+  expect_equal(t1$ours_female[t1$characteristic == "N participants"], "60")
+})
+
+test_that("the disclosure floor is a floor, not merely a default", {
+  # If some other file ever lowers .MIN_CELL, these tables must not follow it down: 20 is policy.
+  stashed <- get(".MIN_CELL", inherits = TRUE)
+  assign(".MIN_CELL", 5L, envir = globalenv())
+  on.exit(assign(".MIN_CELL", stashed, envir = globalenv()), add = TRUE)
+  expect_equal(.pt_min_cell(), 20L)
+
+  # A higher value IS honoured -- the floor only clamps from below.
+  assign(".MIN_CELL", 50L, envir = globalenv())
+  expect_equal(.pt_min_cell(), 50L)
+})
+
 test_that("Table 1 converts our mg/dL into the paper's mmol/L", {
   t1 <- make_paper_table1(fake_at_risk())
   chol <- t1[t1$characteristic == "Total cholesterol, mmol/L", ]
