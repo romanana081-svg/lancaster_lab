@@ -41,6 +41,8 @@ __pycache__/
 venv/
 .Rhistory
 .RData
+# testthat writes a reproduction script per failure here; scratch, not source.
+tests/testthat/_problems/
 .Rproj.user/
 .ipynb_checkpoints/
 .DS_Store

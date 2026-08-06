@@ -376,6 +376,25 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 
 ---
 
+### Q-R4 — Are the transcribed Table 4 calibration slopes right?
+- **Priority:** 🟡
+- **Status:** open. Blocks nothing today; blocks quoting a slope in a manuscript.
+- **Why it matters:** `configs/config.yaml` now carries the paper's Table 1 and Table 4 so
+  `paper_tables.R` can print our numbers beside theirs. **Table 1 has an arithmetic check** — its
+  sex-split rows sum to the abstract totals transcribed weeks earlier, six ways, all asserted in
+  `test-paper-tables.R`. **Table 4's calibration slopes have no such second source.** The
+  C-statistics do (they match `c_statistic_ascvd`, transcribed independently), but a wrong slope
+  would print as a confident number with nothing to contradict it — and the slope is the row a reader
+  will use to decide whether PREVENT is calibrated here.
+- **Also unexplained:** Table 4's ASCVD event counts (31,277 F / 31,328 M) are *below* Table 1's
+  validation counts (33,969 / 33,933). Both are transcribed as printed. The likely reason is a
+  narrower analysis set for the performance models, but that is a guess and is recorded as one.
+- **To resolve:** read Table 4 off the PDF and confirm six numbers — the ASCVD base-model slope and
+  IQI for each sex, and the two PCE slopes. Ten minutes with the paper open.
+- **Deadline:** before any slope from this table appears in a manuscript, abstract, or committee slide.
+
+---
+
 ## Resolved
 
 *(when a question is resolved, move it here with a link to the D-entry that settled it, rather than

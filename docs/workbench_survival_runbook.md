@@ -152,6 +152,52 @@ returns `NA` unless *every* input is present, so check `scorable_only` and the `
 
 ---
 
+## Step 3c — the paper's **tables**, rebuilt on our cohort
+
+The figures answer "does the shape look right". The tables are what a reader actually checks a
+validation against, and they are the part of the paper we can restate line for line.
+
+```r
+source("src/ascvd/validation/paper_tables.R")
+pt <- render_paper_tables(res, cal)               # prints both; writes reports/paper_tables_<date>.txt
+```
+
+| Table | What it holds | Ours vs theirs |
+|---|---|---|
+| **Table 1** — baseline characteristics | age, BP, lipids, BMI, eGFR, diabetes, smoking, treatment, follow-up, events, by sex | our at-risk set beside their derivation **and** external-validation columns |
+| **Table 4** — model performance, ASCVD, base model | Harrell's C and the calibration slope, by sex | ours (one cohort, 95% CI) beside theirs (21 cohorts, median + IQI), with the **PCEs** as the ruler |
+
+**Read Table 1 before Table 4, every time.** Our C will land below theirs, and most of the reason is
+in Table 1 rather than in PREVENT: shorter follow-up, a different age spread, a different diabetes
+prevalence. Showing the performance number without the cohort it came from invites "PREVENT does worse
+in All of Us", which this analysis cannot support.
+
+Four things the tables print with themselves, because each one turns a methods difference into an
+apparent finding if a reader does not know it:
+
+1. **Their interval is an IQI across 21 cohorts** — the spread *between populations*. Ours is a
+   sampling CI inside one cohort. The row labels say which is which; do not merge them into one "95%"
+   column.
+2. **Their calibration slope is 10-year observed on 10-year predicted.** Ours is both at *our*
+   horizon, after the constant-hazard rescale. The `Horizon, y` row carries this.
+3. **Their observed risk models the competing risk of non-CVD death.** Ours is `1 - KM` with death
+   treated as censoring, because no death table is wired — which biases our observed risk, and so our
+   slope, **upward**. This is the largest methodological gap in the comparison.
+4. **The PCE rows are theirs, not ours.** They are the scale: ~0.5 is what a badly calibrated slope
+   looks like, ~1.05 is what a good one looks like. Our slope means little without both ends.
+
+Rows we cannot fill (race, UACR, SDI, HF events, deaths) are printed **blank on our side with the
+paper's value still shown**, so the gap is visible rather than quietly dropped.
+
+**Tables 2 and 3 are deliberately absent.** They are hazard ratios meta-analyzed across the 25
+derivation cohorts — reproducing them means *re-deriving* PREVENT, not validating it. We run the
+published equation as published. The output file says so, for anyone who opens it outside this repo.
+
+Same disclosure rules as the validation summary: aggregate only, counts under 20 suppressed, and
+statistics derived from a suppressed count blanked. Read it before pasting it.
+
+---
+
 ## Step 4 — bring the readout out
 
 ```r

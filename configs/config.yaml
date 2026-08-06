@@ -237,6 +237,108 @@ literature:
     # Discrimination in external validation, base model, ASCVD — the target for T-007.
     c_statistic_ascvd: { female: 0.774, male: 0.736 }
 
+    # ---------------------------------------------------------------------------------------------
+    # TABLE 1 — baseline characteristics, transcribed so `src/ascvd/validation/paper_tables.R` can
+    # print our cohort beside theirs. Column order is ALWAYS [derivation_F, derivation_M,
+    # validation_F, validation_M], as printed in the paper.
+    #
+    # PROVENANCE AND THE ARITHMETIC CHECK. Transcribed 2026-08-06 from the PMC copy (PMC10910659).
+    # Six sums over these rows reproduce numbers transcribed into this file WEEKS EARLIER from the
+    # abstract — which is the check that the right rows were read, not merely that a number was
+    # copied without a typo:
+    #   n_participants  F+M = 3,281,919 (derivation)  and 3,330,085 (validation)
+    #   events_cvd      F+M =   106,661 (derivation)  and   104,854 (validation)
+    #   events_ascvd    F+M =    66,503 (derivation)  and    67,902 (validation)
+    # test-paper-tables.R asserts all six against the `derivation:`/`validation:` blocks above. If an
+    # edit ever breaks one, suspect this transcription, not the test.
+    #
+    # UNITS ARE THE PAPER'S. Cholesterol is mmol/L here and mg/dL in All of Us. The table builder
+    # converts OUR numbers up into these units; it never rewrites this block. Do not "fix" these to
+    # mg/dL — the reference column has to stay quotable against the printed table.
+    table1:
+      units: { age: years, sbp: mm_Hg, cholesterol: mmol_per_L, bmi: kg_per_m2,
+               egfr: mL_min_per_1.73m2, uacr: mg_per_g, hba1c: percent, followup: years }
+
+      # [derivation_F, derivation_M, validation_F, validation_M]
+      count:
+        n_participants: [1839828, 1442091, 1894882, 1435203]
+        n_cohorts:      [25,      25,      21,      21]
+        events_cvd:     [53258,   53403,   54365,   50489]
+        events_ascvd:   [31812,   34691,   33969,   33933]
+        events_hf:      [30957,   28393,   30287,   25679]
+        deaths:         [84289,   80897,   82555,   76783]
+
+      # each cell is [mean, sd]
+      mean_sd:
+        age:            [[53, 13],  [52, 12],  [52, 13],  [52, 12]]
+        sbp:            [[123, 16], [127, 15], [123, 16], [128, 15]]
+        total_c:        [[5.0, 0.8], [4.9, 0.8], [5.0, 0.8], [4.9, 0.8]]
+        non_hdl_c:      [[3.4, 0.8], [3.6, 0.8], [3.5, 0.8], [3.6, 0.8]]
+        hdl_c:          [[1.5, 0.4], [1.2, 0.3], [1.5, 0.4], [1.2, 0.3]]
+        bmi:            [[29, 5],   [29, 4],   [28, 5],   [29, 4]]
+        egfr:           [[91, 19],  [91, 17],  [91, 18],  [91, 17]]
+        hba1c_dm:       [[7.3, 1.8], [7.6, 1.9], [7.2, 1.8], [7.6, 1.9]]
+        hba1c_nondm:    [[5.7, 0.8], [5.8, 0.9], [5.5, 0.6], [5.6, 0.8]]
+        followup_years: [[4.8, 3.1], [4.6, 3.0], [5.0, 3.2], [4.8, 3.2]]
+
+      pct:
+        race_white:     [78,  80,  78,  80]
+        race_black:     [10,  8.0, 10,  8.2]
+        race_hispanic:  [6.0, 5.3, 4.2, 3.7]
+        race_asian:     [2.6, 2.5, 2.7, 2.2]
+        race_other:     [4.1, 4.6, 4.9, 5.5]
+        diabetes:       [10,  12,  11,  13]
+        smoking:        [5.8, 6.2, 4.7, 4.9]
+        bp_tx:          [23,  27,  24,  29]
+        statin:         [14,  17,  14,  17]
+
+      # each cell is [median, iqi_lo, iqi_hi]
+      median_iqi:
+        uacr:           [[8, 8, 12], [8, 8, 12], [8, 8, 12], [8, 8, 11]]
+        sdi_decile:     [[4, 2, 7],  [3, 2, 6],  [4, 2, 7],  [4, 2, 6]]
+
+    # ---------------------------------------------------------------------------------------------
+    # TABLE 4 — model performance in the EXTERNAL VALIDATION cohorts.
+    #
+    # THE INTERVAL IS AN IQI, NOT A CI. Each estimate is the median across 21 validation cohorts and
+    # the interval is the interquartile interval of those cohort-level estimates — a spread BETWEEN
+    # populations. We have one cohort, so ours carries a sampling CI instead. The two are not the
+    # same quantity and paper_tables.R labels each rather than lining them up as if they were.
+    #
+    # NOT INDEPENDENTLY CROSS-CHECKED (unlike table1 above, which has its arithmetic check): the
+    # calibration slopes and the event counts on these rows have no second source in this repo. The
+    # ASCVD C-statistics DO agree with `c_statistic_ascvd` transcribed earlier. Verify a slope
+    # against the PDF before it goes in a manuscript. See Q-R4.
+    #
+    # Also note the ASCVD event counts here (31,277 F / 31,328 M) are BELOW Table 1's validation
+    # counts (33,969 / 33,933). Both are transcribed as printed. Do not mix them in one arithmetic.
+    table4:
+      n_cohorts: 21
+      n_participants: { female: 1894882, male: 1435203 }
+      # [estimate, iqi_lo, iqi_hi]
+      base_model:
+        ascvd_female: { c_statistic: [0.774, 0.743, 0.788], calibration_slope: [1.09, 0.93, 1.33],
+                        n_events: 31277 }
+        ascvd_male:   { c_statistic: [0.736, 0.710, 0.755], calibration_slope: [1.04, 0.95, 1.19],
+                        n_events: 31328 }
+        cvd_female:   { c_statistic: [0.794, 0.763, 0.809], calibration_slope: [1.03, 0.81, 1.16],
+                        n_events: 50324 }
+        cvd_male:     { c_statistic: [0.757, 0.727, 0.778], calibration_slope: [0.94, 0.81, 1.13],
+                        n_events: 46804 }
+        hf_female:    { c_statistic: [0.830, 0.816, 0.850], calibration_slope: [1.00, 0.55, 1.15],
+                        n_events: 27931 }
+        hf_male:      { c_statistic: [0.809, 0.777, 0.827], calibration_slope: [0.89, 0.49, 1.07],
+                        n_events: 23707 }
+      # The PCEs on the same cohorts — the comparison that makes the calibration slope legible: a
+      # slope of ~0.5 is what BAD calibration looks like on this scale, and PREVENT's ~1.05 is what
+      # good looks like. Ours means little without both ends of that ruler.
+      pce_comparison:
+        ascvd_female: { c_statistic: [0.772, 0.729, 0.782], calibration_slope: [0.54, 0.47, 0.61] }
+        ascvd_male:   { c_statistic: [0.733, 0.701, 0.751], calibration_slope: [0.50, 0.39, 0.52] }
+      delta_c_prevent_minus_pce:
+        ascvd_female: [0.007, 0.006, 0.009]
+        ascvd_male:   [0.005, 0.004, 0.006]
+
   # The band we expect OUR observed acute-ASCVD rate to fall in, and why it is not just "4.2".
   # Our cohort is OLDER (median 58 vs the paper's mean ~52.6) and is selected on having a complete
   # lab panel, i.e. on sustained healthcare contact (A-015) — both push the true rate UP. Against
