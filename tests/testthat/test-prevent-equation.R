@@ -17,6 +17,29 @@ with_fixture <- function(f) {
   f(con)
 }
 
+test_that("run_prevent accepts a SOURCED prevent_base, not only an installed package", {
+  # Having the AHA code as a folder is not the same as having the package: requireNamespace() sees
+  # only .libPaths(). `allow_installed = FALSE` forces the fallback path here, because a test cannot
+  # uninstall a package to reach it -- and on a machine where AHAprevent IS installed, that branch
+  # would otherwise never run and could rot unnoticed.
+  prevent_base <<- function(sex, age, tc, hdl, sbp, dm, smoking, bmi, egfr, bptreat, statin)
+    list(prevent_base_10yr_ASCVD = as.list(rep(4.2, length(age))))
+  on.exit(rm(prevent_base, envir = globalenv()), add = TRUE)
+
+  panel <- data.frame(person_id = 1:2, sex = c("female", "male"), age = c(50, 60),
+                      total_c = c(200, 190), hdl_c = c(45, 40), sbp = c(120, 130),
+                      dm = c(FALSE, TRUE), smoking = c(FALSE, FALSE), bmi = c(25, 28),
+                      egfr = c(90, 85), bp_tx = c(FALSE, TRUE), statin = c(FALSE, FALSE))
+  out <- suppressMessages(run_prevent(panel, allow_installed = FALSE))
+  expect_equal(out$prevent_base_10yr_ASCVD, c(4.2, 4.2))
+  # And it must SAY the numbers came from a sourced copy rather than an installed package.
+  expect_match(attr(out, "prevent_impl"), "SOURCED")
+})
+
+test_that("run_prevent explains the folder-is-not-a-package case when nothing can be found", {
+  expect_error(.prevent_base_fn(allow_installed = FALSE), "not installed yet|DESCRIPTION")
+})
+
 test_that("prevent_base reproduces the AHA package's documented worked example (T-016 gate)", {
   skip_if_no_aha()
   # The example from AHAprevent's own docs: a 45-year-old woman, TC 200, HDL 60, SBP 120, diabetes,
