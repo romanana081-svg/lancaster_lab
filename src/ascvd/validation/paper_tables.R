@@ -120,7 +120,8 @@ paper_table4_reference <- function(outcome = c("ascvd", "cvd", "hf"), path = .PT
     b <- t4$base_model[[paste0(outcome, "_", sx)]]
     if (is.null(b)) return(NULL)
     p <- t4$pce_comparison[[paste0(outcome, "_", sx)]]
-    d <- t4$delta_c_prevent_minus_pce[[paste0(outcome, "_", sx)]]
+    # Note the key: delta C carries a 95% CI, not the IQI every other interval in this block uses.
+    d <- t4$delta_c_prevent_minus_pce_95ci[[paste0(outcome, "_", sx)]]
     data.frame(
       sex = sx,
       c_statistic = b$c_statistic[[1]], c_iqi_lo = b$c_statistic[[2]], c_iqi_hi = b$c_statistic[[3]],

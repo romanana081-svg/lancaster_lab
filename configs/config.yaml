@@ -305,10 +305,18 @@ literature:
     # populations. We have one cohort, so ours carries a sampling CI instead. The two are not the
     # same quantity and paper_tables.R labels each rather than lining them up as if they were.
     #
-    # NOT INDEPENDENTLY CROSS-CHECKED (unlike table1 above, which has its arithmetic check): the
-    # calibration slopes and the event counts on these rows have no second source in this repo. The
-    # ASCVD C-statistics DO agree with `c_statistic_ascvd` transcribed earlier. Verify a slope
-    # against the PDF before it goes in a manuscript. See Q-R4.
+    # CONFIRMED BY A SECOND READ, 2026-08-06 (Q-R4). The ASCVD rows were re-transcribed from the PMC
+    # per-table view, separately from the first pass over the article page, and all six values agree:
+    # both C-statistics, both calibration slopes, and both PCE slopes. The column headers read
+    # verbatim "C-statistic (IQI)" and "Calibration slope (IQI)". The ASCVD C-statistics also agree
+    # with `c_statistic_ascvd`, transcribed weeks earlier. Two machine reads of the same source are
+    # not a human eyeball on the printed page, so a manuscript still wants one -- but this is no
+    # longer a single unchecked transcription.
+    #
+    # THE DELTA-C INTERVAL IS A 95% CI, NOT AN IQI -- it is a contrast between two models on the same
+    # cohorts, so it has sampling error rather than between-cohort spread. Every other interval in
+    # this block is an IQI. Mislabelling the two is precisely the error paper_tables.R exists to
+    # prevent, so the key below says which it is.
     #
     # Also note the ASCVD event counts here (31,277 F / 31,328 M) are BELOW Table 1's validation
     # counts (33,969 / 33,933). Both are transcribed as printed. Do not mix them in one arithmetic.
@@ -335,7 +343,8 @@ literature:
       pce_comparison:
         ascvd_female: { c_statistic: [0.772, 0.729, 0.782], calibration_slope: [0.54, 0.47, 0.61] }
         ascvd_male:   { c_statistic: [0.733, 0.701, 0.751], calibration_slope: [0.50, 0.39, 0.52] }
-      delta_c_prevent_minus_pce:
+      # [estimate, ci_lo, ci_hi] -- a 95% CONFIDENCE interval, unlike every other interval here.
+      delta_c_prevent_minus_pce_95ci:
         ascvd_female: [0.007, 0.006, 0.009]
         ascvd_male:   [0.005, 0.004, 0.006]
 

@@ -377,8 +377,16 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 ---
 
 ### Q-R4 — Are the transcribed Table 4 calibration slopes right?
-- **Priority:** 🟡
-- **Status:** open. Blocks nothing today; blocks quoting a slope in a manuscript.
+- **Priority:** 🟢 (was 🟡)
+- **Status:** **largely retired 2026-08-06.** The ASCVD rows were re-transcribed from the PMC
+  per-table view, by a different path from the first pass over the article page, and all six values
+  agree: both C-statistics, both calibration slopes, both PCE slopes. The headers read verbatim
+  "C-statistic (IQI)" and "Calibration slope (IQI)". That second read also **caught a real error** —
+  the delta-C interval is a 95% CI, not an IQI (it is a contrast between two models on the same
+  cohorts, so it carries sampling error, not between-cohort spread). The config key is now
+  `delta_c_prevent_minus_pce_95ci` so the distinction cannot be lost again.
+- **What is still open:** two machine reads of the same source are not a person reading the printed
+  page, and the event-count discrepancy below is still unexplained.
 - **Why it matters:** `configs/config.yaml` now carries the paper's Table 1 and Table 4 so
   `paper_tables.R` can print our numbers beside theirs. **Table 1 has an arithmetic check** — its
   sex-split rows sum to the abstract totals transcribed weeks earlier, six ways, all asserted in
@@ -389,8 +397,9 @@ Categories: **Q-S** study design & statistics · **Q-A** outcome ascertainment �
 - **Also unexplained:** Table 4's ASCVD event counts (31,277 F / 31,328 M) are *below* Table 1's
   validation counts (33,969 / 33,933). Both are transcribed as printed. The likely reason is a
   narrower analysis set for the performance models, but that is a guess and is recorded as one.
-- **To resolve:** read Table 4 off the PDF and confirm six numbers — the ASCVD base-model slope and
-  IQI for each sex, and the two PCE slopes. Ten minutes with the paper open.
+- **To resolve:** open the PDF at Table 4 and confirm the two ASCVD base-model calibration slopes and
+  their IQIs (**1.09, 0.93–1.33** female; **1.04, 0.95–1.19** male). Everything else on the row has a
+  second source already. Two minutes.
 - **Deadline:** before any slope from this table appears in a manuscript, abstract, or committee slide.
 
 ---

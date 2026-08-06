@@ -58,6 +58,13 @@ test_that("Table 4's ASCVD C-statistics match the independently transcribed ones
   # table still prints, so assert it is there.
   expect_true(all(is.finite(ref$pce_c)), info = "PCE C-statistics missing from config")
   expect_true(all(ref$pce_slope < 0.7), info = "PCE slopes should be the badly-calibrated end (~0.5)")
+
+  # Delta C is the one interval in that block that is a 95% CI rather than an IQI, and the config key
+  # says so. If a rename ever drops the suffix, this fails rather than the number quietly going NA
+  # and printing as "-".
+  expect_true(all(is.finite(ref$delta_c)),
+              info = "delta_c_prevent_minus_pce_95ci missing or renamed in config.yaml")
+  expect_equal(ref$delta_c[ref$sex == "female"], 0.007)
 })
 
 test_that("all three outcomes are transcribed, not just ours", {
