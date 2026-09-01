@@ -44,6 +44,22 @@
 
 `%||%` <- function(a, b) if (is.null(a) || !length(a)) b else a
 
+#' Print progress on STDOUT, flushed immediately.
+#'
+#' Deliberately not message(). message() writes to stderr, and a Jupyter R kernel frequently does not
+#' surface stderr in the cell output at all -- so a function that reports its progress entirely
+#' through message() produces LITERALLY NOTHING in a notebook, and an install that is working
+#' perfectly is indistinguishable from one that has hung. That is the single most confusing failure
+#' mode this script can have, because the user's only reasonable conclusion is that it is broken.
+#'
+#' flush.console() matters for the same reason: without it R buffers, and the output arrives in one
+#' lump at the end, which is exactly when it stops being progress.
+.iap_say <- function(...) {
+  cat(..., "\n", sep = "")
+  utils::flush.console()
+  invisible(NULL)
+}
+
 #' Where a zip plausibly lands in a Workbench instance, in the order worth looking.
 .iap_search_dirs <- function() {
   unique(Filter(dir.exists, c(
@@ -84,7 +100,7 @@
 #' Pull a gs:// object down to a local temp file. Returns the local path.
 .iap_from_bucket <- function(gs_path) {
   dest <- file.path(tempdir(), basename(gs_path))
-  message("  fetching ", gs_path)
+  .iap_say("  fetching ", gs_path)
   st <- suppressWarnings(system2("gsutil", c("cp", shQuote(gs_path), shQuote(dest)),
                                  stdout = TRUE, stderr = TRUE))
   if (!file.exists(dest))
@@ -138,9 +154,9 @@ verify_ahaprevent <- function(quiet = FALSE) {
   want$pass <- is.finite(want$got) & abs(want$diff) <= 0.05
 
   if (!quiet) {
-    message("\n  published worked example (Khan et al. 2024, Circulation):")
+    .iap_say("\n  published worked example (Khan et al. 2024, Circulation):")
     for (i in seq_len(nrow(want)))
-      message(sprintf("    %-22s ours %6s   paper %4.1f   %s", want$what[i],
+      .iap_say(sprintf("    %-22s ours %6s   paper %4.1f   %s", want$what[i],
                       if (is.finite(want$got[i])) sprintf("%.2f", want$got[i]) else "NA",
                       want$paper[i], if (want$pass[i]) "OK" else "MISMATCH"))
   }
@@ -154,20 +170,29 @@ verify_ahaprevent <- function(quiet = FALSE) {
 #' @param force reinstall even if AHAprevent is already present.
 #' @return invisibly, the verification result.
 install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
+  # Say something IMMEDIATELY. Everything below can take a while, and silence is the one output that
+  # tells the user nothing about whether it is working.
+  .iap_say("install_ahaprevent(): starting")
+  .iap_say("  wd        : ", getwd())
+  .iap_say("  libPaths  : ", paste(.libPaths(), collapse = " | "))
+
   have <- requireNamespace("AHAprevent", quietly = TRUE)
   if (have && !force) {
-    message("AHAprevent is ALREADY installed (version ",
+    .iap_say("AHAprevent is ALREADY installed (version ",
             as.character(utils::packageVersion("AHAprevent")), ").")
-    message("Checking it against the published example rather than taking that at face value...")
+    .iap_say("Checking it against the published example rather than taking that at face value...")
     v <- verify_ahaprevent()
-    message(if (isTRUE(v$ok)) "\n  PASS — the installed package reproduces the paper. Nothing to do."
+    .iap_say(if (isTRUE(v$ok)) "\n  PASS — the installed package reproduces the paper. Nothing to do."
             else "\n  It did NOT reproduce the paper. Re-install with: install_ahaprevent(force = TRUE)")
     return(invisible(v))
   }
 
   # -- 1. find the source ---------------------------------------------------------------------
   if (is.null(src)) {
+    .iap_say("  searching for a PREVENT package or zip in:")
+    for (d in .iap_search_dirs()) .iap_say("    ", d)
     cand <- .iap_locate()
+    .iap_say("  found ", length(cand), " candidate(s)")
     if (!length(cand))
       stop("install_ahaprevent(): found neither a PREVENT zip nor an unpacked package. Looked in:\n  ",
            paste(.iap_search_dirs(), collapse = "\n  "),
@@ -178,7 +203,7 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
            "\n    install_ahaprevent(\"gs://.../PREVENT.zip\")", call. = FALSE)
     src <- cand[1]
     if (length(cand) > 1)
-      message("found ", length(cand), " candidates; using the first:\n  ",
+      .iap_say("found ", length(cand), " candidates; using the first:\n  ",
               paste(cand, collapse = "\n  "))
   }
   if (grepl("^gs://", src)) src <- .iap_from_bucket(src)
@@ -189,7 +214,7 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
   if (grepl("\\.zip$", src, ignore.case = TRUE)) {
     dest <- file.path(path.expand("~"), "ahaprevent_src")
     unlink(dest, recursive = TRUE); dir.create(dest, recursive = TRUE, showWarnings = FALSE)
-    message("unzipping ", src, "\n  -> ", dest)
+    .iap_say("unzipping ", src, "\n  -> ", dest)
     utils::unzip(src, exdir = dest)
     root <- dest
   } else {
@@ -210,7 +235,7 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
 
   What is in there:\n    %s", root, root, paste(top, collapse = "\n    ")), call. = FALSE)
   }
-  message("package root: ", pkg)
+  .iap_say("package root: ", pkg)
 
   # -- 4. install, with a user-library fallback ------------------------------------------------
   do_install <- function(target_lib) {
@@ -218,8 +243,8 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
                             lib = target_lib %||% .libPaths()[1])
   }
   ok <- tryCatch({ do_install(lib); requireNamespace("AHAprevent", quietly = TRUE) },
-                 error = function(e) { message("  first attempt failed: ", conditionMessage(e)); FALSE },
-                 warning = function(w) { message("  ", conditionMessage(w))
+                 error = function(e) { .iap_say("  first attempt failed: ", conditionMessage(e)); FALSE },
+                 warning = function(w) { .iap_say("  ", conditionMessage(w))
                                          requireNamespace("AHAprevent", quietly = TRUE) })
 
   if (!ok) {
@@ -227,9 +252,9 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
     if (nzchar(ulib)) {
       dir.create(ulib, recursive = TRUE, showWarnings = FALSE)
       .libPaths(c(ulib, .libPaths()))
-      message("retrying into your personal library: ", ulib)
+      .iap_say("retrying into your personal library: ", ulib)
       ok <- tryCatch({ do_install(ulib); requireNamespace("AHAprevent", quietly = TRUE) },
-                     error = function(e) { message("  ", conditionMessage(e)); FALSE })
+                     error = function(e) { .iap_say("  ", conditionMessage(e)); FALSE })
     }
   }
   if (!ok)
@@ -237,18 +262,18 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
   a compile error usually means a missing system library, and a permission error means the fallback
   library path is also not writable.", call. = FALSE)
 
-  message("\ninstalled AHAprevent ", as.character(utils::packageVersion("AHAprevent")))
+  .iap_say("\ninstalled AHAprevent ", as.character(utils::packageVersion("AHAprevent")))
 
   # -- 5. prove it ----------------------------------------------------------------------------
   v <- verify_ahaprevent()
   if (isTRUE(v$ok)) {
-    message("\n  PASS — reproduces the published worked example to the paper's own precision.")
-    message("  You are clear to run:  source(\"src/workbench/01_check.R\"); run_check()")
+    .iap_say("\n  PASS — reproduces the published worked example to the paper's own precision.")
+    .iap_say("  You are clear to run:  source(\"src/workbench/01_check.R\"); run_check()")
   } else if (is.na(v$ok)) {
-    message("\n  Installed, but not verified: ", v$detail)
+    .iap_say("\n  Installed, but not verified: ", v$detail)
   } else {
-    message("\n  INSTALLED BUT IT DOES NOT REPRODUCE THE PAPER. Do not run the validation on this.")
-    message("  Most likely this zip is not the AHA implementation, or it is a modified copy.")
+    .iap_say("\n  INSTALLED BUT IT DOES NOT REPRODUCE THE PAPER. Do not run the validation on this.")
+    .iap_say("  Most likely this zip is not the AHA implementation, or it is a modified copy.")
   }
   invisible(v)
 }
