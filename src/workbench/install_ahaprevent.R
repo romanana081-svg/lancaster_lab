@@ -52,21 +52,33 @@
     path.expand("~/Downloads"))))
 }
 
-#' Find a PREVENT zip or an unpacked package directory.
-.iap_locate <- function() {
-  hits <- character(0)
-  for (d in .iap_search_dirs()) {
-    z <- list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
-                    full.names = TRUE, recursive = FALSE)
-    hits <- c(hits, z)
+#' Find a PREVENT zip, or an ALREADY-UNPACKED package directory.
+#'
+#' Both are normal states to arrive in: some people upload the zip, some unzip it first, and the
+#' second group was previously told "no PREVENT zip found" while a perfectly good package sat in the
+#' home directory. An unpacked directory is preferred when both exist -- it is the one the user
+#' already looked at, and re-unzipping over it would discard any edit they made.
+.iap_locate <- function(dirs = .iap_search_dirs()) {
+  # 1. unpacked package directories: a prevent-ish folder name with a DESCRIPTION in it.
+  unpacked <- character(0)
+  for (d in dirs) {
+    sub <- tryCatch(list.dirs(d, recursive = FALSE, full.names = TRUE),
+                    error = function(e) character(0))
+    sub <- sub[grepl("prevent", basename(sub), ignore.case = TRUE)]
+    for (s in sub) if (!is.null(.iap_pkg_root(s))) unpacked <- c(unpacked, s)
   }
-  # Also look one level down -- the Workbench file browser often drops uploads into a subfolder.
-  for (d in .iap_search_dirs()) {
-    z <- tryCatch(list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
-                             full.names = TRUE, recursive = TRUE), error = function(e) character(0))
-    hits <- c(hits, head(z, 20))
-  }
-  unique(hits)
+
+  # 2. zips, top level first, then one sweep deeper -- the file browser often nests an upload.
+  zips <- character(0)
+  for (d in dirs)
+    zips <- c(zips, list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
+                               full.names = TRUE, recursive = FALSE))
+  for (d in dirs)
+    zips <- c(zips, head(tryCatch(list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
+                                             full.names = TRUE, recursive = TRUE),
+                                  error = function(e) character(0)), 20))
+
+  unique(c(unpacked, zips))
 }
 
 #' Pull a gs:// object down to a local temp file. Returns the local path.
@@ -157,7 +169,7 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
   if (is.null(src)) {
     cand <- .iap_locate()
     if (!length(cand))
-      stop("install_ahaprevent(): no PREVENT zip found. Looked in:\n  ",
+      stop("install_ahaprevent(): found neither a PREVENT zip nor an unpacked package. Looked in:\n  ",
            paste(.iap_search_dirs(), collapse = "\n  "),
            "\n\n  Pass the path directly. To see where your upload landed:",
            "\n    list.files(\"~\", pattern = \"zip$\", recursive = TRUE)[1:20]",

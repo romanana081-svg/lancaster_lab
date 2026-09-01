@@ -69,3 +69,23 @@ test_that("verify_ahaprevent reproduces the published worked example", {
   expect_true(isTRUE(v$ok))
   expect_true(all(v$detail$pass))
 })
+
+test_that("an already-unpacked package folder is found, and preferred over a zip", {
+  # The state the user is actually in: ~/AHAprevent/DESCRIPTION, nothing zipped. This used to report
+  # "no PREVENT zip found" while a perfectly good package sat next to it.
+  home <- file.path(tempdir(), "iap_home"); unlink(home, recursive = TRUE)
+  mk_desc(file.path(home, "AHAprevent"), "AHAprevent")
+  writeLines("x", file.path(home, "PREVENT-main.zip"))     # a zip is present too
+
+  hits <- .iap_locate(dirs = home)
+  expect_true(length(hits) >= 1)
+  expect_equal(basename(hits[1]), "AHAprevent")            # the unpacked folder comes first
+  expect_true(dir.exists(hits[1]))
+})
+
+test_that("a prevent-named folder WITHOUT a DESCRIPTION is not offered as a package", {
+  home <- file.path(tempdir(), "iap_home2"); unlink(home, recursive = TRUE)
+  dir.create(file.path(home, "prevent_notes"), recursive = TRUE)
+  writeLines("just notes", file.path(home, "prevent_notes", "readme.txt"))
+  expect_length(.iap_locate(dirs = home), 0)
+})
