@@ -47,3 +47,21 @@ tests/testthat/_problems/
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+
+# ------------------------------------------------------------------------------------------------
+# Markdown is LOCAL-ONLY as of 2026-08-31 (user decision).
+#
+# The repository on GitHub now carries only what has to run inside the All of Us Workbench: R under
+# src/, SQL under sql/, configs/, tests/, and the offline fixture. Every .md file -- the design notes,
+# the decision log, the runbooks, CLAUDE.md, README.md -- still exists on disk and in git HISTORY
+# (`git log --all -- DESIGN.md`), it is simply no longer tracked, so it does not travel to GitHub or
+# into a Workbench clone.
+#
+# CONSEQUENCE, and it is the one that bites: a `git pull` in the Workbench will NOT bring any
+# documentation with it. Every instruction needed to RUN something therefore has to live in the header
+# of the R file that does it. src/workbench/*.R are written that way on purpose -- if you add a script,
+# put its run instructions in the file, not in a runbook nobody will receive.
+#
+# To put a file back: `git add -f <file>`.
+# ------------------------------------------------------------------------------------------------
+*.md
