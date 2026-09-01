@@ -231,3 +231,69 @@ test_that("imputing with the outcome preserves the smoking-event association bet
   expect_gt(or_with, or_none)
   expect_gt(or_with, 1.5)
 })
+
+# ---- the sentences the abstract writes for itself --------------------------------------------------
+
+source(file.path("..", "..", "src", "ascvd", "validation", "paper_tables.R"))
+source(file.path("..", "..", "src", "workbench", "03_mice.R"))
+
+cstat <- function(sex, c, lo, hi, events = 100)
+  data.frame(stratum = sex, n = 2000, events = events, c_index = c,
+             se = (hi - lo) / 3.92, lower = lo, upper = hi, stringsAsFactors = FALSE)
+slope <- function(sex, s, lo, hi, events = 100)
+  data.frame(stratum = sex, slope = s, se = (hi - lo) / 3.92, lower = lo, upper = hi,
+             n = 2000, events = events, stringsAsFactors = FALSE)
+
+test_that("overlapping arms are reported as agreement, not as a difference", {
+  cc <- rbind(cstat("female", 0.75, 0.70, 0.80), cstat("male", 0.72, 0.67, 0.77))
+  mi <- rbind(cstat("female", 0.74, 0.69, 0.79), cstat("male", 0.73, 0.68, 0.78))
+  v <- .mice_verdict(cc, mi, NULL)
+  expect_match(paste(v$arms, collapse = " "), "overlapping")
+  expect_false(any(grepl("[[", v$arms, fixed = TRUE)))
+})
+
+test_that("non-overlapping arms are named, with the direction and a marker to explain it", {
+  cc <- rbind(cstat("female", 0.85, 0.82, 0.88), cstat("male", 0.72, 0.67, 0.77))
+  mi <- rbind(cstat("female", 0.70, 0.66, 0.74), cstat("male", 0.73, 0.68, 0.78))
+  v <- .mice_verdict(cc, mi, NULL)
+  txt <- paste(v$arms, collapse = " ")
+  expect_match(txt, "differed in women")
+  expect_match(txt, "0.85 -> 0.70")
+  expect_false(grepl("male:", txt))          # the sex that AGREED must not be named as differing
+})
+
+test_that("the benchmark sentence places us correctly against the published range", {
+  # Published ASCVD IQI is 0.743-0.788 (female) and 0.710-0.755 (male).
+  below  <- rbind(cstat("female", 0.70, 0.66, 0.74), cstat("male", 0.65, 0.61, 0.69))
+  within <- rbind(cstat("female", 0.76, 0.72, 0.80), cstat("male", 0.73, 0.69, 0.77))
+  above  <- rbind(cstat("female", 0.85, 0.81, 0.89), cstat("male", 0.82, 0.78, 0.86))
+  expect_match(paste(.mice_verdict(NULL, below,  NULL)$benchmark, collapse = " "), "below in women")
+  expect_match(paste(.mice_verdict(NULL, within, NULL)$benchmark, collapse = " "), "within in women")
+  expect_match(paste(.mice_verdict(NULL, above,  NULL)$benchmark, collapse = " "), "above in women")
+})
+
+test_that("the calibration sentence reads the interval against 1 in both directions", {
+  ident <- rbind(slope("female", 1.02, 0.85, 1.20), slope("male", 0.98, 0.80, 1.16))
+  over  <- rbind(slope("female", 0.55, 0.40, 0.70), slope("male", 0.60, 0.45, 0.75))
+  under <- rbind(slope("female", 1.60, 1.30, 1.90), slope("male", 1.50, 1.25, 1.75))
+  expect_match(paste(.mice_verdict(NULL, NULL, ident)$calibration, collapse = " "),
+               "consistent with the identity")
+  expect_match(paste(.mice_verdict(NULL, NULL, over)$calibration,  collapse = " "), "over-predicted")
+  expect_match(paste(.mice_verdict(NULL, NULL, under)$calibration, collapse = " "), "under-predicted")
+})
+
+test_that("a small-cell stratum is never turned into a sentence", {
+  # Below the suppression floor the estimate must not appear in prose either — the report suppresses
+  # the table cell, and an abstract that quotes the same number defeats that entirely.
+  tiny <- rbind(cstat("female", 0.75, 0.70, 0.80, events = 5),
+                cstat("male",   0.72, 0.67, 0.77, events = 5))
+  v <- .mice_verdict(tiny, tiny, NULL)
+  expect_match(paste(v$arms, collapse = " "), "[[", fixed = TRUE)
+  expect_false(grepl("0.75", paste(v$arms, collapse = " ")))
+})
+
+test_that("missing inputs degrade to a marker rather than an empty claim", {
+  v <- .mice_verdict(NULL, NULL, NULL)
+  expect_match(paste(v$arms, collapse = " "), "[[", fixed = TRUE)
+  expect_match(paste(v$calibration, collapse = " "), "[[", fixed = TRUE)
+})

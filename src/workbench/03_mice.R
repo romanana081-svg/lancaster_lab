@@ -335,6 +335,99 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   say("\ncopied to %s (a failed copy is not a failed run — the files are still on disk)", bucket)
 }
 
+# ---- the sentences the draft can write for itself ---------------------------------------------------
+
+#' Turn the two arms and the published benchmark into FACTUAL sentences.
+#'
+#' These used to be [[ ]] markers for a human to resolve, and three of them were mechanical: do the
+#' two arms' intervals overlap, does ours land inside the published range, does the slope interval
+#' contain 1. A person re-deriving those by eye at 11pm before a deadline gets one of them backwards.
+#'
+#' What is generated is strictly descriptive — overlap, direction, containment. The JUDGEMENT
+#' (is this good enough to claim PREVENT transports to All of Us?) stays a [[ ]] marker, because it
+#' depends on the incidence check and the death caveat, neither of which this function can see.
+#'
+#' @return list(arms, benchmark, calibration) — each a character vector of complete sentences, or a
+#'   [[ ]] marker when the inputs were too thin to say anything.
+.mice_verdict <- function(cc_c, mi_c, mi_slope, mc = .mice_min_cell()) {
+  sexes  <- c("female", "male")
+  usable <- function(r) !is.null(r) && nrow(r) && (is.na(r$events[1]) || r$events[1] >= mc)
+  # The stratum labels are the panel's coding; an abstract says "women" and "men". Translating at the
+  # point of writing keeps the data coding honest and the prose readable.
+  who    <- function(s) c(female = "women", male = "men")[[s]]
+
+  # -- 1. did imputation change the answer? -------------------------------------------------------
+  cmp <- lapply(sexes, function(s) {
+    a <- .mice_row(cc_c, s); b <- .mice_row(mi_c, s)
+    if (!usable(a) || !usable(b)) return(NULL)
+    list(sex = s, cc = a$c_index[1], mi = b$c_index[1],
+         # Overlapping 95% intervals is a weak criterion, and that is the right strength here: the
+         # claim being made is "imputation did not overturn the result", not "the two are equal".
+         overlap = a$lower[1] <= b$upper[1] && b$lower[1] <= a$upper[1])
+  })
+  cmp <- Filter(Negate(is.null), cmp)
+
+  arms <- if (!length(cmp)) {
+    "  [[Too few events to compare the arms — say so rather than implying agreement.]]"
+  } else if (all(vapply(cmp, function(x) x$overlap, logical(1)))) {
+    c(sprintf(paste("  Complete-case and imputed C-statistics had overlapping 95%% confidence",
+                    "intervals in %s,"),
+              if (length(cmp) > 1) "both sexes" else sprintf("%s participants", cmp[[1]]$sex)),
+      "  so the discrimination result does not depend on excluding participants who did not answer",
+      "  the smoking question.")
+  } else {
+    d <- Filter(function(x) !x$overlap, cmp)
+    c(sprintf("  Complete-case and imputed C-statistics differed in %s (%s).",
+              paste(vapply(d, function(x) who(x$sex), character(1)), collapse = " and "),
+              paste(vapply(d, function(x) sprintf("%s: %.2f -> %.2f", who(x$sex), x$cc, x$mi),
+                           character(1)), collapse = "; ")),
+      "  [[This is the interesting case: complete-case analysis was giving a different answer.",
+      "    Say which direction and why the responders differ from the non-responders.]]")
+  }
+
+  # -- 2. how do we sit against the published validation? -----------------------------------------
+  ref <- tryCatch(paper_table4_reference("ascvd"), error = function(e) NULL)
+  bench <- if (is.null(ref) || is.null(mi_c)) {
+    "  [[Compare the pooled C to Khan et al.'s published range by sex.]]"
+  } else {
+    parts <- Filter(Negate(is.null), lapply(sexes, function(s) {
+      b <- .mice_row(mi_c, s); r <- ref[ref$sex == s, , drop = FALSE]
+      if (!usable(b) || !nrow(r)) return(NULL)
+      where <- if (b$c_index[1] < r$c_iqi_lo[1]) "below"
+               else if (b$c_index[1] > r$c_iqi_hi[1]) "above" else "within"
+      sprintf("%s in %s (%.2f vs %.2f-%.2f)", where, who(s), b$c_index[1],
+              r$c_iqi_lo[1], r$c_iqi_hi[1])
+    }))
+    if (!length(parts)) "  [[Compare the pooled C to the published range.]]" else
+      c("  Against the published PREVENT validation (inter-quartile range across 21 cohorts), our",
+        sprintf("  pooled C-statistic was %s.", paste(unlist(parts), collapse = ", and ")))
+  }
+
+  # -- 3. calibration slope against the identity --------------------------------------------------
+  calib <- if (is.null(mi_slope)) {
+    "  [[No pooled calibration slope was produced — do not imply calibration was assessed.]]"
+  } else {
+    parts <- Filter(Negate(is.null), lapply(sexes, function(s) {
+      r <- .mice_row(mi_slope, s)
+      if (!usable(r)) return(NULL)
+      sprintf("  in %s, %.2f (95%% CI %.2f-%.2f), %s;", who(s), r$slope[1], r$lower[1], r$upper[1],
+              if (r$lower[1] <= 1 && r$upper[1] >= 1) "consistent with the identity"
+              else if (r$upper[1] < 1) "below 1, i.e. PREVENT over-predicted"
+              else "above 1, i.e. PREVENT under-predicted")
+    }))
+    parts <- unlist(parts)
+    parts[length(parts)] <- sub(";$", ".", parts[length(parts)])   # last clause ends the sentence
+    if (!length(parts)) "  [[No reportable calibration slope.]]" else
+      # One line per sex: these sentences carry two numbers and a clause each, and a single joined
+      # line ran past 160 characters, which a submission form silently reflows into nonsense.
+      c("  The pooled calibration slope was:", parts,
+        "  Note the direction of the known bias before interpreting this: deaths are not ascertained,",
+        "  so observed risk is over-stated and the slope is biased UPWARD.")
+  }
+
+  list(arms = arms, benchmark = bench, calibration = calib)
+}
+
 # ---- the two written artifacts ---------------------------------------------------------------------
 
 .mice_write <- function(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
@@ -437,6 +530,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   writeLines(rep_lines, rep_path)
 
   # ---- the abstract draft -----------------------------------------------------------------------
+  verdict <- .mice_verdict(cc_c, mi_c, mi_slope, mc)
   cfmt <- function(tbl, s) {
     r <- .mice_row(tbl, s)
     if (is.null(r) || (!is.na(r$events[1]) && r$events[1] < mc)) return("[[suppressed]]")
@@ -492,18 +586,18 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
             cfmt(mi_c, "female"), cfmt(mi_c, "male")),
     sprintf("  Calibration slope, pooled: %s in women and %s in men.",
             sfmt(mi_slope, "female"), sfmt(mi_slope, "male")),
-    "  [[STATE THE DIRECTION: were the complete-case and imputed C-statistics materially different?",
-    "    If they overlap, that is the finding — the validation does not depend on discarding 60% of",
-    "    the cohort. If they differ, say which way and why that matters.]]",
-    "  [[COMPARE TO THE PAPER: Khan et al. report C around 0.79-0.82 by sex. Is ours in that range?]]",
+    verdict$arms,
+    verdict$benchmark,
+    verdict$calibration,
     "",
     "CONCLUSIONS",
-    "  [[ONE SENTENCE ON DISCRIMINATION — this is the robust half; it uses only the ordering of",
-    "    predicted risk and survives the horizon mismatch and the ascertainment caveats.]]",
-    "  [[ONE SENTENCE ON CALIBRATION — and it must carry the death caveat, or do not make the claim.]]",
-    "  Multiple imputation of survey-derived risk factors materially increased the analytic sample",
-    "  without refitting the model, and provides a less biased estimate than complete-case analysis",
-    "  under a missing-at-random assumption.",
+    "  The published AHA PREVENT equations, applied unchanged, discriminated incident ASCVD in a",
+    "  diverse real-world EHR cohort, and multiple imputation of survey-derived risk factors",
+    sprintf("  increased the analytic sample by %.0f%% without refitting the model.", pct_add),
+    "  [[ONE SENTENCE OF INTERPRETATION — and it is the only thing left to write. Discrimination is",
+    "    the defensible half (it uses only the ORDER of predicted risk). A calibration claim needs",
+    "    the incidence check from 01_check.R alongside it, because an under-ascertained outcome and",
+    "    a genuinely over-predicting equation are indistinguishable on a calibration plot.]]",
     "",
     "LIMITATIONS (do not drop these to make the word count)",
     "  Deaths were not ascertained, so competing risk was treated as censoring and observed risk is",
