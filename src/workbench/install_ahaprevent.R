@@ -68,33 +68,45 @@
     path.expand("~/Downloads"))))
 }
 
-#' Find a PREVENT zip, or an ALREADY-UNPACKED package directory.
+#' The archive extensions an R package actually arrives in.
 #'
-#' Both are normal states to arrive in: some people upload the zip, some unzip it first, and the
-#' second group was previously told "no PREVENT zip found" while a perfectly good package sat in the
-#' home directory. An unpacked directory is preferred when both exist -- it is the one the user
-#' already looked at, and re-unzipping over it would discard any edit they made.
+#' .tar.gz is the CANONICAL one -- it is what `R CMD build` produces and what a CRAN-style download
+#' gives you -- and it was missing. Someone with AHAprevent_1.0.0.tar.gz sitting in their home
+#' directory was told "found neither a PREVENT zip nor an unpacked package", which is both wrong and
+#' unactionable: they were holding the most standard form of the thing.
+.IAP_ARCHIVE_RE <- "prevent.*[.](zip|tar[.]gz|tgz)$"
+
+#' Find a PREVENT archive, or an ALREADY-UNPACKED package directory.
+#'
+#' Three states are all normal to arrive in: the zip, the tarball, or a folder someone already
+#' unpacked. An unpacked directory is preferred when several exist -- it is the one the user already
+#' looked at, and re-unpacking over it would discard any edit they made.
+#'
+#' The deep sweep is DEPTH-BOUNDED on purpose. It used to be `recursive = TRUE` over every search
+#' directory, and one of those is the home directory of a Workbench instance: an unbounded listing
+#' there walks the entire workspace, which on a large one takes long enough to be indistinguishable
+#' from a hang. Two levels finds a nested upload and cannot run away.
 .iap_locate <- function(dirs = .iap_search_dirs()) {
-  # 1. unpacked package directories: a prevent-ish folder name with a DESCRIPTION in it.
+  ls_dirs <- function(d) tryCatch(list.dirs(d, recursive = FALSE, full.names = TRUE),
+                                  error = function(e) character(0))
+  ls_arch <- function(d) tryCatch(list.files(d, pattern = .IAP_ARCHIVE_RE, ignore.case = TRUE,
+                                             full.names = TRUE, recursive = FALSE),
+                                  error = function(e) character(0))
+
+  # 1. unpacked package directories: a prevent-ish folder name with a DESCRIPTION under it.
   unpacked <- character(0)
   for (d in dirs) {
-    sub <- tryCatch(list.dirs(d, recursive = FALSE, full.names = TRUE),
-                    error = function(e) character(0))
+    sub <- ls_dirs(d)
     sub <- sub[grepl("prevent", basename(sub), ignore.case = TRUE)]
     for (s in sub) if (!is.null(.iap_pkg_root(s))) unpacked <- c(unpacked, s)
   }
 
-  # 2. zips, top level first, then one sweep deeper -- the file browser often nests an upload.
-  zips <- character(0)
-  for (d in dirs)
-    zips <- c(zips, list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
-                               full.names = TRUE, recursive = FALSE))
-  for (d in dirs)
-    zips <- c(zips, head(tryCatch(list.files(d, pattern = "prevent.*\\.zip$", ignore.case = TRUE,
-                                             full.names = TRUE, recursive = TRUE),
-                                  error = function(e) character(0)), 20))
+  # 2. archives: top level first, then exactly one level deeper -- the file browser nests uploads.
+  arch <- character(0)
+  for (d in dirs) arch <- c(arch, ls_arch(d))
+  for (d in dirs) for (s in ls_dirs(d)) arch <- c(arch, ls_arch(s))
 
-  unique(c(unpacked, zips))
+  unique(c(unpacked, arch))
 }
 
 #' Pull a gs:// object down to a local temp file. Returns the local path.
@@ -106,6 +118,36 @@
   if (!file.exists(dest))
     stop(sprintf("could not copy %s out of the bucket. gsutil said:\n  %s",
                  gs_path, paste(st, collapse = "\n  ")), call. = FALSE)
+  dest
+}
+
+#' Turn whatever the user has into a directory to look for a DESCRIPTION in.
+#'
+#' A directory passes through untouched -- re-unpacking over a folder someone already opened would
+#' discard any edit they made. A .zip is unzipped and a .tar.gz is UNTARRED, and the second half was
+#' missing: .tar.gz is the canonical R source-package format, so the most standard thing to be
+#' holding was the one thing this could not open.
+#'
+#' Failure returns NULL rather than stopping, because the caller has other candidates to try.
+#' @param dest  where to unpack. A parameter so a test can unpack somewhere other than the user's
+#'   home directory -- a test suite that wipes ~/ahaprevent_src as a side effect is a test suite that
+#'   destroys the thing someone is in the middle of using.
+.iap_unpack <- function(src, dest = file.path(path.expand("~"), "ahaprevent_src")) {
+  if (dir.exists(src)) return(src)
+  is_zip <- grepl("[.]zip$", src, ignore.case = TRUE)
+  is_tar <- grepl("[.](tar[.]gz|tgz)$", src, ignore.case = TRUE)
+  if (!is_zip && !is_tar) return(src)
+
+  unlink(dest, recursive = TRUE); dir.create(dest, recursive = TRUE, showWarnings = FALSE)
+  .iap_say(if (is_zip) "unzipping " else "untarring ", src)
+  .iap_say("  -> ", dest)
+  ok <- tryCatch({
+    if (is_zip) utils::unzip(src, exdir = dest) else utils::untar(src, exdir = dest)
+    TRUE
+  }, error = function(e) { .iap_say("  could not unpack: ", conditionMessage(e)); FALSE },
+     warning = function(w) { .iap_say("  ", conditionMessage(w))
+                             length(list.files(dest, recursive = TRUE)) > 0 })
+  if (!isTRUE(ok) || !length(list.files(dest, recursive = TRUE))) return(NULL)
   dest
 }
 
@@ -189,51 +231,60 @@ install_ahaprevent <- function(src = NULL, lib = NULL, force = FALSE) {
 
   # -- 1. find the source ---------------------------------------------------------------------
   if (is.null(src)) {
-    .iap_say("  searching for a PREVENT package or zip in:")
+    .iap_say("  searching for a PREVENT package, zip or tarball in:")
     for (d in .iap_search_dirs()) .iap_say("    ", d)
     cand <- .iap_locate()
     .iap_say("  found ", length(cand), " candidate(s)")
+    for (x in cand) .iap_say("    ", x)
     if (!length(cand))
-      stop("install_ahaprevent(): found neither a PREVENT zip nor an unpacked package. Looked in:\n  ",
+      stop("install_ahaprevent(): found no PREVENT package, zip or tarball. Looked in:\n  ",
            paste(.iap_search_dirs(), collapse = "\n  "),
-           "\n\n  Pass the path directly. To see where your upload landed:",
-           "\n    list.files(\"~\", pattern = \"zip$\", recursive = TRUE)[1:20]",
+           "\n\n  Pass the path directly -- a folder, a .zip or a .tar.gz all work:",
+           "\n    install_ahaprevent(\"~/AHAprevent_1.0.0.tar.gz\")",
+           "\n\n  To see where your upload landed:",
+           "\n    list.files(\"~\", pattern = \"[.](zip|tar[.]gz|tgz)$\", recursive = TRUE)[1:20]",
            "\n  Or, if you uploaded it to the workspace bucket:",
            "\n    system(paste0(\"gsutil ls \", Sys.getenv(\"WORKSPACE_BUCKET\"), \"/**\"))",
            "\n    install_ahaprevent(\"gs://.../PREVENT.zip\")", call. = FALSE)
-    src <- cand[1]
-    if (length(cand) > 1)
-      .iap_say("found ", length(cand), " candidates; using the first:\n  ",
-              paste(cand, collapse = "\n  "))
-  }
-  if (grepl("^gs://", src)) src <- .iap_from_bucket(src)
-  src <- path.expand(src)
-  if (!file.exists(src)) stop("install_ahaprevent(): no such path: ", src, call. = FALSE)
-
-  # -- 2. unpack ------------------------------------------------------------------------------
-  if (grepl("\\.zip$", src, ignore.case = TRUE)) {
-    dest <- file.path(path.expand("~"), "ahaprevent_src")
-    unlink(dest, recursive = TRUE); dir.create(dest, recursive = TRUE, showWarnings = FALSE)
-    .iap_say("unzipping ", src, "\n  -> ", dest)
-    utils::unzip(src, exdir = dest)
-    root <- dest
   } else {
-    root <- src
+    cand <- src
   }
 
-  # -- 3. find the package root ---------------------------------------------------------------
-  pkg <- .iap_pkg_root(root)
+  # -- 2. unpack, and 3. find the package root -------------------------------------------------
+  # Every candidate gets a turn. A prevent-NAMED archive is not necessarily an R package: a Downloads
+  # folder can easily hold AHA_prevent_STATA.zip, which matches the search and contains no
+  # DESCRIPTION. Taking only the first candidate turned that into a hard stop about "loose source
+  # files" while the real package sat second in the list -- a failure whose message described the
+  # wrong file entirely.
+  pkg <- NULL; root <- NULL; tried <- character(0)
+  for (this in cand) {
+    one <- if (grepl("^gs://", this)) .iap_from_bucket(this) else path.expand(this)
+    if (!file.exists(one)) { tried <- c(tried, paste0(this, "  (no such path)")); next }
+    r1 <- .iap_unpack(one)
+    p1 <- if (is.null(r1)) NULL else .iap_pkg_root(r1)
+    if (!is.null(p1)) { pkg <- p1; root <- r1; src <- one; break }
+    tried <- c(tried, paste0(this, "  (no DESCRIPTION inside -- not an R package)"))
+    if (length(cand) > 1) .iap_say("  not an R package, moving on: ", this)
+  }
+
   if (is.null(pkg)) {
-    top <- head(list.files(root, recursive = TRUE), 30)
-    stop(sprintf("install_ahaprevent(): no DESCRIPTION anywhere under %s, so this is loose source
-  files rather than an R package. That is still usable — find the file defining prevent_base() and
-  source it; run_prevent() picks up a sourced copy and reports that it did:
+    look <- if (is.null(root)) path.expand(cand[1]) else root
+    top  <- head(tryCatch(list.files(look, recursive = TRUE), error = function(e) character(0)), 30)
+    stop(sprintf("install_ahaprevent(): none of the candidates is an R package -- no DESCRIPTION in
+  any of them:
+    %s
+
+  If what you have is loose source files rather than a package, that is still usable -- find the
+  file defining prevent_base() and source it; run_prevent() picks up a sourced copy and says so:
 
     f <- list.files(\"%s\", pattern = \"[.][Rr]$\", recursive = TRUE, full.names = TRUE)
     f[grepl(\"prevent\", f, ignore.case = TRUE)]
     source(<the file that defines prevent_base>)
 
-  What is in there:\n    %s", root, root, paste(top, collapse = "\n    ")), call. = FALSE)
+  What is in %s:
+    %s",
+                 paste(tried, collapse = "\n    "), look, look, paste(top, collapse = "\n    ")),
+         call. = FALSE)
   }
   .iap_say("package root: ", pkg)
 

@@ -89,3 +89,68 @@ test_that("a prevent-named folder WITHOUT a DESCRIPTION is not offered as a pack
   writeLines("just notes", file.path(home, "prevent_notes", "readme.txt"))
   expect_length(.iap_locate(dirs = home), 0)
 })
+
+test_that("a .tar.gz is found — it is the canonical R source-package format", {
+  # The failure this closes: AHAprevent_1.0.0.tar.gz in the home directory, and the script replying
+  # "found neither a PREVENT zip nor an unpacked package". The most standard form of the thing was
+  # the one form it could not see.
+  home <- file.path(tempdir(), "iap_tgz"); unlink(home, recursive = TRUE)
+  dir.create(home, recursive = TRUE)
+  writeLines("x", file.path(home, "AHAprevent_1.0.0.tar.gz"))
+  hits <- .iap_locate(dirs = home)
+  expect_length(hits, 1)
+  expect_match(basename(hits[1]), "tar[.]gz$")
+})
+
+test_that("a tarball unpacks to a findable package root", {
+  b <- file.path(tempdir(), "iap_tar_src"); unlink(b, recursive = TRUE)
+  mk_desc(file.path(b, "AHAprevent"), "AHAprevent", "9.9.9")
+  dir.create(file.path(b, "AHAprevent", "R"), recursive = TRUE, showWarnings = FALSE)
+  writeLines("prevent_base <- function(...) 1", file.path(b, "AHAprevent", "R", "p.R"))
+
+  tp <- file.path(tempdir(), "AHAprevent_9.9.9.tar.gz"); unlink(tp)
+  old <- setwd(b); on.exit(setwd(old), add = TRUE)
+  made <- tryCatch({ utils::tar(tp, "AHAprevent", compression = "gzip"); file.exists(tp) },
+                   error = function(e) FALSE, warning = function(w) file.exists(tp))
+  setwd(old)
+  skip_if_not(isTRUE(made), "no tar utility on this machine")
+
+  dest <- file.path(tempdir(), "iap_tar_out")
+  root <- .iap_unpack(tp, dest = dest)
+  expect_false(is.null(root))
+  expect_equal(basename(.iap_pkg_root(root)), "AHAprevent")
+})
+
+test_that("a prevent-named archive that is not an R package yields no package root", {
+  # AHA_prevent_STATA.zip is a real file in a real Downloads folder: it matches the name search and
+  # contains no DESCRIPTION. Taking only the FIRST candidate turned it into a hard stop whose error
+  # message described the wrong file; the caller now tries the next one instead.
+  b <- file.path(tempdir(), "iap_decoy_src"); unlink(b, recursive = TRUE)
+  dir.create(file.path(b, "prevent_stata"), recursive = TRUE)
+  writeLines("* stata do-file", file.path(b, "prevent_stata", "prevent.do"))
+
+  zp <- file.path(tempdir(), "AHA_prevent_STATA.zip"); unlink(zp)
+  old <- setwd(b); on.exit(setwd(old), add = TRUE)
+  zipped <- tryCatch({ utils::zip(zp, "prevent_stata", flags = "-qr"); file.exists(zp) },
+                     error = function(e) FALSE, warning = function(w) file.exists(zp))
+  setwd(old)
+  skip_if_not(isTRUE(zipped), "no zip utility on this machine")
+
+  root <- .iap_unpack(zp, dest = file.path(tempdir(), "iap_decoy_out"))
+  expect_false(is.null(root))          # it unpacked fine
+  expect_null(.iap_pkg_root(root))     # it is simply not an R package
+})
+
+test_that("the deep sweep is depth-bounded, and still finds a nested upload", {
+  # It used to be recursive = TRUE over the home directory of a Workbench instance, which on a large
+  # workspace takes long enough to be indistinguishable from a hang.
+  home <- file.path(tempdir(), "iap_depth"); unlink(home, recursive = TRUE)
+  dir.create(file.path(home, "uploads"), recursive = TRUE)
+  writeLines("x", file.path(home, "uploads", "AHAprevent.zip"))         # one level down: found
+  dir.create(file.path(home, "a", "b", "c"), recursive = TRUE)
+  writeLines("x", file.path(home, "a", "b", "c", "AHAprevent.zip"))     # three down: not walked
+
+  hits <- .iap_locate(dirs = home)
+  expect_length(hits, 1)
+  expect_true(grepl("uploads", hits[1], fixed = TRUE))
+})
