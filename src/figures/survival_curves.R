@@ -75,14 +75,34 @@ source_survival_deps <- function(root = ".", quiet = FALSE) {
 #' @return list(end_of_followup, per_table) — `per_table` is printed so an outlier date (a data-entry
 #'   year 2099) is visible rather than silently becoming the cutoff.
 derive_end_of_followup <- function(con) {
-  q <- function(sql) tryCatch(as.Date(DBI::dbGetQuery(con, sql)[[1]][1]), error = function(e) as.Date(NA))
+  # Each probe is guarded, because ONE unavailable table should not stop the other two. But a
+  # swallowed error is only acceptable if it is kept: every failure here used to become NA, and three
+  # NAs became "no dates found in condition/procedure/measurement" -- which describes empty tables and
+  # says nothing about the far likelier cause, that the connection cannot reach BigQuery at all. An
+  # auth failure and an empty CDR produced the identical message.
+  errs <- character(0)
+  q <- function(sql) tryCatch(as.Date(DBI::dbGetQuery(con, sql)[[1]][1]),
+                              error = function(e) {
+                                errs <<- c(errs, conditionMessage(e))
+                                as.Date(NA)
+                              })
   per_table <- c(
     condition = q("SELECT MAX(CAST(condition_start_date AS DATE)) FROM condition_occurrence"),
     procedure = q("SELECT MAX(CAST(procedure_date AS DATE)) FROM procedure_occurrence"),
     measurement = q("SELECT MAX(CAST(measurement_date AS DATE)) FROM measurement"))
   per_table <- per_table[!is.na(per_table)]
-  if (!length(per_table))
-    stop("derive_end_of_followup(): no dates found in condition/procedure/measurement.", call. = FALSE)
+  if (!length(per_table)) {
+    detail <- if (length(errs))
+      paste0("\n\n  Every query FAILED. The first error was:\n    ", errs[1],
+             "\n\n  A fresh Workbench instance usually means one of:",
+             "\n    * bigrquery has no credentials yet -- bigrquery::bq_auth(scopes = \"https://www.googleapis.com/auth/bigquery\")",
+             "\n    * GOOGLE_PROJECT is unset, so there is no project to bill the query to",
+             "\n    * the table names did not resolve -- check Sys.getenv(\"WORKSPACE_CDR\")")
+      else "\n\n  The queries RAN and returned no rows, so the tables really are empty for these
+  columns. Check that WORKSPACE_CDR points at the CDR you expect."
+    stop("derive_end_of_followup(): no dates found in condition/procedure/measurement.", detail,
+         call. = FALSE)
+  }
   # Guard the 2099 case: a single absurd date should not become the cutoff for everyone.
   today_ish <- as.Date("2030-01-01")
   sane <- per_table[per_table < today_ish]
