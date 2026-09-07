@@ -518,10 +518,20 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   ev_cc  <- sum(cc_set$event == 1L, na.rm = TRUE)
   ev_mi  <- sum(mice_set$event == 1L, na.rm = TRUE)
   n_add  <- nrow(mice_set) - nrow(cc_set)
+  # Panel-level counts when we have them, arm-level as a fallback so the sentence still writes.
+  cov_num <- if (!is.null(n_panel)) unname(n_panel["cc"])   else nrow(cc_set)
+  cov_den <- if (!is.null(n_panel)) unname(n_panel["mice"]) else nrow(mice_set)
+  if (!length(cov_den) || is.na(cov_den) || cov_den == 0) { cov_num <- NA_real_; cov_den <- NA_real_ }
   pct_add <- if (nrow(cc_set) > 0) 100 * n_add / nrow(cc_set) else NA_real_
   yrs    <- as.numeric(end_of_followup - landmark) / 365.25
 
   fmi <- if (!is.null(mi_c)) sprintf("%.2f", max(mi_c$fmi, na.rm = TRUE)) else "-"
+  # A median is a summary of the whole arm, not a cell count, so suppression does not apply to it --
+  # but an arm too small to report a count for is too small to quote a median from either.
+  med <- function(d) {
+    if (!nrow(d) || nrow(d) < mc || !risk_col %in% names(d)) return("-")
+    sprintf("%.1f%%", stats::median(d[[risk_col]], na.rm = TRUE))
+  }
 
   # ---- the comparison report --------------------------------------------------------------------
   hdr <- function(t) c("", strrep("=", 96), t, strrep("=", 96))
@@ -558,6 +568,10 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     rowf("incident events", .mice_n(ev_cc), .mice_n(ev_mi)),
     rowf("smoking", "observed for all",
          sprintf("%s imputed", .mice_n(unname(imp$missing_before[[1]])))),
+    # The abstract quotes a median predicted risk, and it had no source anywhere in this report --
+    # so whoever filled that blank went looking in another run's output, at a different landmark,
+    # on a different cohort. It costs one line to make the sentence self-sourcing.
+    rowf("median predicted 10-yr risk", med(cc_set), med(mice_set)),
     "",
     sprintf("  MICE adds %s people (+%.0f%%) and %s events. Those people are in the cohort because",
             .mice_n(n_add), pct_add, .mice_n(ev_mi - ev_cc)),
@@ -640,9 +654,13 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     "  The AHA PREVENT equations estimate 10-year cardiovascular risk without race. External",
     "  validation in diverse, real-world cohorts is limited. In electronic health record cohorts the",
     "  binding constraint is rarely the laboratory panel but the survey-derived inputs: in All of Us,",
-    sprintf("  smoking status was available for only %.0f%% of participants with an otherwise complete",
-            if (nrow(mice_set) > 0) 100 * nrow(cc_set) / nrow(mice_set) else NA_real_),
-    "  PREVENT panel. Complete-case analysis discards these participants, who differ systematically",
+    # Coverage is a statement about DATA AVAILABILITY, so it is the ratio of panel rows -- not of
+    # the at-risk arms, which have had prevalent cases and the 30-day window removed from both the
+    # numerator and the denominator. The two differ, and quoting the second under the first
+    # sentence's wording would be a claim about the cohort dressed as a claim about the survey.
+    sprintf("  smoking status was available for only %.0f%% of the %s participants with an otherwise",
+            100 * cov_num / cov_den, .mice_n(cov_den)),
+    "  complete PREVENT panel. Complete-case analysis discards the rest, who differ systematically",
     "  from responders.",
     "",
     "METHODS",
