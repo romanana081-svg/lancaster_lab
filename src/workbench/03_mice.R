@@ -1,10 +1,26 @@
 # 03_mice.R — the abstract. ONE call: impute the missing inputs, validate PREVENT, write the draft.
 #
-# RUN IT:
+# RUN IT -- five lines, in this order, and the order is not decoration:
+#
 #   setwd("~/lancaster_lab")
-#   install.packages("mice")                      # once per Workbench instance
+#   source("src/workbench/install_ahaprevent.R"); install_ahaprevent()   # once per instance
+#   install.packages("mice")                                            # once per instance
 #   source("src/workbench/03_mice.R")
 #   out <- run_mice_abstract()
+#
+# install_ahaprevent() comes FIRST because without the AHAprevent package there is no risk column,
+# and every number below it is downstream of one. It scores the paper's own worked example and tells
+# you whether it matched, so ten seconds there replaces a full cohort run that produces nothing.
+# `mice` is checked for at the top of run_mice_abstract(), before any query is billed.
+#
+# If you have already run 01_check.R in this session, pass its landmark so the two analyses agree
+# about who was studied:  run_mice_abstract(landmark = as.Date("YYYY-MM-DD"))
+#
+# REHEARSE IT OFFLINE FIRST (neither needs the Workbench, both take under a minute):
+#   run_mice_abstract_fixture()      stage 1 against the fixture DB: connect, build the frame, score
+#                                    the panel, carve the arms. PASSES by stopping on an empty arm --
+#                                    the fixture has no complete panel with a smoking answer.
+#   run_mice_abstract_synthetic()    stages 2-6 on a generated cohort: impute, pool, write both files.
 #
 # It writes, and every one of them is aggregate-only and safe to paste back:
 #   reports/abstract_<date>.txt        the structured abstract, numbers already substituted
@@ -84,6 +100,56 @@
   d <- d[, !grepl("^prevent_base_", names(d)), drop = FALSE]
   run_prevent(d)
 }
+
+#' Keep only the rows that are actually in the at-risk set.
+#'
+#' THE TRAP THIS EXISTS FOR, and it only bites on real data. `at_risk` frames out of
+#' ascvd_status_at() carry EVERY panel row and record the verdict in `ascvd_status`; prevalent cases
+#' and people excluded by the 30-day window are deliberately KEPT, with `event` and `followup_days`
+#' set to NA, so that the attrition can be counted rather than inferred from a missing person.
+#'
+#' Every estimator downstream already drops them -- prevent_concordance(), calibration_table() and
+#' impute_prevent_panel() all filter on exactly the condition below -- so leaving them in the arms
+#' changes no ESTIMATE. What it changes is every N printed beside one, and the abstract's headline
+#' sentence IS a count: "complete-case analysis included N participants ... imputation increased the
+#' analytic sample to N (+X%)". On the 300-person fixture the gap is 5 people. In the CDR, prevalent
+#' ASCVD among people with a complete PREVENT panel is a large fraction of them -- the two arms were
+#' being reported at panel size while being analysed at at-risk size, and nothing in the output said
+#' so. Filter once, here, so the N reported is the N analysed.
+.mice_at_risk <- function(d)
+  d[!is.na(d$event) & !is.na(d$followup_days) & d$followup_days >= 0, , drop = FALSE]
+
+#' Refuse to run on an empty arm, and say which of the three usual causes it is.
+#'
+#' Without this the run limps on for three more stages and dies inside impute_prevent_panel() with
+#' "every one of the 0 rows was dropped" -- true, unhelpful, and several screens away from the
+#' landmark that caused it. The comparison is the contribution here, so ONE empty arm is fatal too:
+#' the percentage increase, the coverage sentence in BACKGROUND and every side-by-side row divide by
+#' the complete-case count.
+.mice_require_arms <- function(cc_set, mice_set, cc_all, mice_all, landmark) {
+  hint <- function(n_at_risk, n_panel, what)
+    if (n_panel == 0)
+      sprintf("no participant has %s as of the %s landmark. The panel is built AS OF the landmark,
+  so a landmark earlier than the measurements yields nothing: check choose_landmark()'s output, and
+  check that every input's code list resolves (an unresolved list makes one input NA for everyone,
+  with no error).", what, format(landmark))
+    else
+      sprintf("%d participant(s) have %s, but none of them is at risk -- all are prevalent ASCVD, or
+  excluded by the 30-day panel-to-event window, or have no follow-up time. A landmark late in the
+  CDR does this: prevalence rises and follow-up shrinks together.", n_panel, what)
+
+  if (!nrow(mice_set))
+    stop("mice_abstract_from_frame(): the MICE arm is empty -- ",
+         hint(nrow(mice_set), nrow(mice_all), "a complete PREVENT measurement panel"), call. = FALSE)
+  if (!nrow(cc_set))
+    stop("mice_abstract_from_frame(): the complete-case arm is empty, so there is nothing to compare
+  the imputed arm against -- ",
+         hint(nrow(cc_set), nrow(cc_all), "both a complete panel AND a smoking answer"),
+         "\n  If smoking was never attached, build the frame with attach_smoking_status = TRUE.",
+         call. = FALSE)
+  invisible(NULL)
+}
+
 
 #' One call: complete-case vs MICE validation of PREVENT, and the abstract draft.
 #'
@@ -173,22 +239,35 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   risk_col <- .find_risk_col(at_risk)
 
   # -- 2. the two arms ----------------------------------------------------------------------------
-  cc_set   <- at_risk[which(at_risk$complete_panel_smoking), , drop = FALSE]  # the 02_deliverables cohort
-  mice_set <- at_risk[which(at_risk$complete_panel), , drop = FALSE]          # + the non-answerers
+  cc_all   <- at_risk[which(at_risk$complete_panel_smoking), , drop = FALSE]  # the 02_deliverables cohort
+  mice_all <- at_risk[which(at_risk$complete_panel), , drop = FALSE]          # + the non-answerers
+  cc_set   <- .mice_at_risk(cc_all)
+  mice_set <- .mice_at_risk(mice_all)
   say("\n=== 2/6 arms ===")
-  say("  complete-case : %s at risk", format(nrow(cc_set), big.mark = ","))
-  say("  MICE-eligible : %s at risk (%s with no smoking answer)",
-      format(nrow(mice_set), big.mark = ","),
+  say("  complete-case : %s at risk  (%s panel rows - %s not at risk)",
+      format(nrow(cc_set), big.mark = ","), format(nrow(cc_all), big.mark = ","),
+      format(nrow(cc_all) - nrow(cc_set), big.mark = ","))
+  say("  MICE-eligible : %s at risk  (%s panel rows - %s not at risk; %s with no smoking answer)",
+      format(nrow(mice_set), big.mark = ","), format(nrow(mice_all), big.mark = ","),
+      format(nrow(mice_all) - nrow(mice_set), big.mark = ","),
       format(sum(is.na(mice_set$smoking)), big.mark = ","))
+  .mice_require_arms(cc_set, mice_set, cc_all, mice_all, landmark)
 
   # One horizon for both arms. Derived from the MICE set because it is the superset; evaluating the
   # two arms at different horizons would make the C-statistics incomparable for a reason invisible in
   # the output table.
   if (is.null(horizon_years)) {
-    fu <- mice_set$followup_days[!is.na(mice_set$event)]
-    horizon_years <- max(1, floor(stats::quantile(fu, 0.75, na.rm = TRUE) / 365.25))
-    say("  horizon       : %d year(s) (75th pct of follow-up = %.1f y)",
-        horizon_years, stats::quantile(fu, 0.75, na.rm = TRUE) / 365.25)
+    fu  <- mice_set$followup_days[!is.na(mice_set$event)]
+    q75 <- unname(stats::quantile(fu, 0.75, na.rm = TRUE))
+    # An NA horizon must not be allowed to propagate. Every C-statistic and calibration table
+    # downstream would come back empty and the report would print "horizon NA year(s)" beside a page
+    # of dashes -- a run that looks like it produced nothing rather than one that says what is wrong.
+    if (!length(fu) || is.na(q75))
+      stop("mice_abstract_from_frame(): cannot derive a horizon -- no follow-up time in the MICE arm.
+  Pass horizon_years explicitly, or check end_of_followup: it has to be AFTER the landmark.",
+           call. = FALSE)
+    horizon_years <- max(1, floor(q75 / 365.25))
+    say("  horizon       : %d year(s) (75th pct of follow-up = %.1f y)", horizon_years, q75 / 365.25)
   }
 
   # -- 3. complete-case arm -----------------------------------------------------------------------
@@ -232,7 +311,8 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   # -- report -------------------------------------------------------------------------------------
   paths <- .mice_write(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
                        landmark, end_of_followup, horizon_years, outcome, m, impute_vars,
-                       seed, repdir, risk_col)
+                       seed, repdir, risk_col,
+                       n_panel = c(cc = nrow(cc_all), mice = nrow(mice_all)))
 
   if (isTRUE(copy_to_bucket)) .mice_bucket(figdir, repdir, say)
 
@@ -432,7 +512,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 
 .mice_write <- function(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
                         landmark, end_of_followup, horizon_years, outcome, m, impute_vars,
-                        seed, repdir, risk_col) {
+                        seed, repdir, risk_col, n_panel = NULL) {
   mc     <- .mice_min_cell()
   sexes  <- c("female", "male")
   ev_cc  <- sum(cc_set$event == 1L, na.rm = TRUE)
@@ -468,7 +548,13 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 
     hdr("1. WHAT IMPUTATION BOUGHT"),
     rowf("", "COMPLETE CASE", "MICE"),
-    rowf("at-risk N", .mice_n(nrow(cc_set)), .mice_n(nrow(mice_set))),
+    if (!is.null(n_panel))
+      rowf("panel rows", .mice_n(unname(n_panel["cc"])), .mice_n(unname(n_panel["mice"]))),
+    if (!is.null(n_panel))
+      rowf("  less prevalent / <30d / no f-up",
+           .mice_n(unname(n_panel["cc"]) - nrow(cc_set)),
+           .mice_n(unname(n_panel["mice"]) - nrow(mice_set))),
+    rowf("at-risk N (the analysis sample)", .mice_n(nrow(cc_set)), .mice_n(nrow(mice_set))),
     rowf("incident events", .mice_n(ev_cc), .mice_n(ev_mi)),
     rowf("smoking", "observed for all",
          sprintf("%s imputed", .mice_n(unname(imp$missing_before[[1]])))),
@@ -701,3 +787,56 @@ run_mice_abstract_synthetic <- function(n = 5000, m = 5, outdir = "reports/mice_
                            m = m, horizon_years = 3, figdir = file.path(outdir, "figures"),
                            repdir = outdir, seed = seed, copy_to_bucket = FALSE)
 }
+
+#' Stage-1 smoke test against the fixture DuckDB. Its SUCCESS is a clean stop, not a report.
+#'
+#' run_mice_abstract_synthetic() exercises the analysis (stages 2-6) on a generated cohort. It cannot
+#' exercise stage 1, which is the half that only ever runs against a database: connect, derive
+#' end_of_followup, build the incidence frame with scorable_only = FALSE and smoking attached, score
+#' the panel with AHAprevent, and carve the two arms out of the real column names. That half had
+#' never executed offline -- so the first time it ran anywhere was going to be a Workbench session.
+#'
+#' The fixture cannot go further than that, and the reason is in run_mice_abstract_synthetic()'s
+#' header: 300 synthetic people, no complete PREVENT panel at a landmark this early and no survey
+#' smoking answers, so both arms come out empty. That is not a failure -- it is the guard doing its
+#' job, and this function checks that the guard is what stopped us rather than something upstream.
+#'
+#' PASS here means: the SQL ran, the frame built, AHAprevent scored it, the arms were carved, and the
+#' run refused with a message naming the cause. Any OTHER error is a real break in stage 1.
+#'
+#' @return invisibly, list(ok, condition) -- ok is TRUE when stage 1 completed and the arm guard is
+#'   what stopped the run.
+run_mice_abstract_fixture <- function(landmark = as.Date("2016-01-01"),
+                                      outdir = "reports/mice_fixture_stage1") {
+  source("src/phenotype/R/run_sql.R")
+  con <- connect_cdr()
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+  message("FIXTURE STAGE-1 SMOKE TEST -- 300 synthetic people. No number below means anything.\n",
+          "Expected outcome: stage 1 completes, then the run STOPS on an empty arm.\n")
+
+  cond <- tryCatch({
+    run_mice_abstract(con, landmark = landmark, figdir = file.path(outdir, "figures"),
+                      repdir = outdir, copy_to_bucket = FALSE)
+    NULL
+  }, error = function(e) e)
+
+  if (is.null(cond)) {
+    message("\nRESULT: the full run completed on the fixture. That is a change -- the fixture used to\n",
+            "  have no complete panel with a smoking answer. Read the numbers as synthetic anyway,\n",
+            "  and update this function's header, which now describes something that is not true.")
+    return(invisible(list(ok = TRUE, condition = NULL)))
+  }
+
+  msg      <- conditionMessage(cond)
+  expected <- grepl("arm is empty", msg, fixed = TRUE)
+  if (expected)
+    message("\nRESULT: PASS. Stage 1 ran end to end against the fixture database -- connection, ",
+            "follow-up\n  window, incidence frame, PREVENT scoring, arm carving -- and stopped where ",
+            "it should:\n\n  ", msg,
+            "\n\n  For stages 2-6, run:  run_mice_abstract_synthetic()")
+  else
+    message("\nRESULT: FAIL. Stage 1 broke before the arm guard, so this is a real defect and not a\n",
+            "  fixture limitation:\n\n  ", msg)
+  invisible(list(ok = expected, condition = cond))
+}
+
