@@ -16,9 +16,13 @@ suppressPackageStartupMessages(library(DBI))
 connect_cdr <- function(fixture_path = "fixture/db/aou_fixture.duckdb") {
   cdr <- Sys.getenv("WORKSPACE_CDR")
   if (nzchar(cdr)) {
-    if (!requireNamespace("bigrquery", quietly = TRUE)) {
-      stop("WORKSPACE_CDR is set (we appear to be in the Workbench) but bigrquery is not installed.")
-    }
+    # Collect EVERY missing prerequisite before failing. These are independent of each other, and a
+    # fresh Workbench instance is typically missing more than one -- reporting them one per attempt
+    # turns a two-minute setup into a sequence of round trips, each ending in an error that looks
+    # unrelated to the last.
+    problems <- character(0)
+    if (!requireNamespace("bigrquery", quietly = TRUE))
+      problems <- c(problems, "bigrquery is not installed:  install.packages(\"bigrquery\")")
     # WORKSPACE_CDR is a fully-qualified "data-project.dataset" (e.g.
     # "fc-aou-cdr-prod-ct.C2022Q4R9"). bigrquery wants those split: `project` is the
     # project that HOLDS the CDR, `dataset` the dataset within it, and `billing` the
@@ -26,16 +30,47 @@ connect_cdr <- function(fixture_path = "fixture/db/aou_fixture.duckdb") {
     # dataset set on the connection, bigrquery sends it as the job's DEFAULT dataset,
     # so the bare table names in the .sql files (concept, measurement, ...) resolve —
     # the same mechanism the notebook's bq_dataset_query() calls already rely on.
-    dot <- regexpr("\\.[^.]*$", cdr)  # position of the last dot
+    dot <- regexpr("[.][^.]*$", cdr)  # position of the last dot
     if (dot < 1) stop("connect_cdr(): WORKSPACE_CDR is not 'project.dataset': ", cdr)
     data_project <- substr(cdr, 1, dot - 1)
     dataset      <- substr(cdr, dot + 1, nchar(cdr))
-    message("connect_cdr(): BigQuery — project=", data_project, " dataset=", dataset,
-            " billing=", Sys.getenv("GOOGLE_PROJECT"))
+
+    # A BILLING PROJECT IS NOT OPTIONAL, and an empty one does not fail where you would expect it to.
+    # bigrquery posts the job to /projects/<billing>/jobs; with billing = "" that URL is malformed and
+    # BigQuery answers `notFound`, which reads as "your table does not exist" and sends you looking at
+    # the dataset. The environment is the actual culprit: a Verily-style Workbench instance sets
+    # WORKSPACE_CDR but not GOOGLE_PROJECT, so this is the FIRST thing that happens on a fresh one.
+    billing <- Sys.getenv("GOOGLE_PROJECT")
+    if (!nzchar(billing))
+      problems <- c(problems,
+        "GOOGLE_PROJECT is not set, so there is no project to bill the query to.
+     List the projects you can actually bill to, and use one of them:
+       bigrquery::bq_projects()
+       Sys.setenv(GOOGLE_PROJECT = \"<a project from that list>\")")
+
+    if (length(problems))
+      stop("connect_cdr(): cannot connect to BigQuery -- ", length(problems),
+           " thing(s) missing in this session:
+
+   * ", paste(problems, collapse = "
+   * "), "
+
+  On GOOGLE_PROJECT specifically: bigrquery posts the job to /projects/<billing>/jobs, so an empty
+  one produces `notFound` -- an error about the TABLE, for a problem with the ENVIRONMENT.
+
+  It is NOT reliably the project in WORKSPACE_CDR. On a Verily-style instance that project holds the
+  CDR but does not necessarily grant you bigquery.jobs.create, and guessing it produces `accessDenied`
+  -- a second wrong answer that looks like a permissions problem with the data. bq_projects() is the
+  only thing that actually knows.",
+           call. = FALSE)
+
+
+    message("connect_cdr(): BigQuery -- project=", data_project, " dataset=", dataset,
+            " billing=", billing)
     return(DBI::dbConnect(bigrquery::bigquery(),
                           project = data_project,
                           dataset = dataset,
-                          billing = Sys.getenv("GOOGLE_PROJECT")))
+                          billing = billing))
   }
   if (!file.exists(fixture_path)) {
     stop("connect_cdr(): WORKSPACE_CDR is not set, so I fell back to the OFFLINE fixture — but there\n",
