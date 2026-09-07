@@ -826,6 +826,15 @@ run_mice_abstract_synthetic <- function(n = 5000, m = 5, outdir = "reports/mice_
 #'   what stopped the run.
 run_mice_abstract_fixture <- function(landmark = as.Date("2016-01-01"),
                                       outdir = "reports/mice_fixture_stage1") {
+  # connect_cdr() picks its backend from WORKSPACE_CDR, so in the Workbench this function would
+  # quietly run against the real CDR -- at a hardcoded 2016-01-01 landmark, under a banner saying
+  # "300 synthetic people". Refuse rather than mislead: a rehearsal costs nothing only when it is
+  # not also the performance.
+  if (nzchar(Sys.getenv("WORKSPACE_CDR")))
+    stop("run_mice_abstract_fixture(): WORKSPACE_CDR is set, so connect_cdr() would return BigQuery
+  and this would bill a query against the real CDR while calling itself a fixture run. This function
+  is for the laptop. In the Workbench you want:  run_mice_abstract()", call. = FALSE)
+
   source("src/phenotype/R/run_sql.R")
   con <- connect_cdr()
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
