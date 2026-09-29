@@ -26,6 +26,9 @@
 #
 # It is PRELIMINARY in three named ways, all printed with the readout so they reach the slide:
 #   1. Death is not wired in — competing risk is treated as censoring, which OVERSTATES incidence.
+#      (Still true of THIS driver. The poster route, src/workbench/03_mice.R, builds its cohort with
+#      attach_death = TRUE and estimates observed risk by Aalen-Johansen — D-021, 2026-09-29. The
+#      curves here are Kaplan-Meier and must keep saying so until km_at() is moved over with them.)
 #   2. ICD10CM only — pre-~Oct-2015 events are invisible, which left-truncates and mis-assigns
 #      prevalence.
 #   3. Everyone event-free is censored at the CDR cutoff, not at last contact, which INFLATES
@@ -40,6 +43,7 @@ suppressPackageStartupMessages({ library(dplyr) })
   "src/phenotype/R/extract_prevent.R",
   "src/phenotype/R/extract_smoking.R",
   "src/phenotype/R/extract_ascvd_events.R",
+  "src/phenotype/R/extract_death.R",
   "src/ascvd/prevent/run_prevent.R",
   "src/ascvd/validation/literature_benchmarks.R",
   "src/figures/incidence_overview.R")

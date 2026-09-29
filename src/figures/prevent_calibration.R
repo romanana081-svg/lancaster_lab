@@ -17,11 +17,21 @@
 # Three things have to be right or the comparison is worse than useless, because a miscalibration
 # artefact and a real miscalibration look identical on the plot:
 #
-# 1. OBSERVED MUST BE KAPLAN-MEIER, NOT events/N. A crude proportion treats everyone censored early as
-#    a non-event and UNDER-states observed risk -- which in a plot of observed vs predicted reads as
-#    over-prediction by PREVENT. That is precisely the conclusion this figure exists to test, so
-#    getting it from a censoring artefact would be self-confirming. `16_observed_by_prevent_risk` uses
-#    the crude proportion; this file does not, and that is the main reason it exists.
+# 1. OBSERVED MUST COME FROM A CENSORING-AWARE ESTIMATOR, NOT events/N. A crude proportion treats
+#    everyone censored early as a non-event and UNDER-states observed risk -- which in a plot of
+#    observed vs predicted reads as over-prediction by PREVENT. That is precisely the conclusion this
+#    figure exists to test, so getting it from a censoring artefact would be self-confirming.
+#    `16_observed_by_prevent_risk` uses the crude proportion; this file does not, and that is the
+#    main reason it exists.
+#
+#    WHICH estimator (changed 2026-09-29, D-021): AALEN-JOHANSEN when the frame carries
+#    `competing_status` (apply_competing_death(), extract_death.R), Kaplan-Meier when it does not.
+#    1 - KM treats a death as censoring, i.e. it estimates ASCVD risk in a population where nobody
+#    dies of anything else first, and so OVER-states what was actually observed. Aalen-Johansen
+#    estimates the cumulative incidence of ASCVD with death as a competing event, which is the
+#    quantity a predicted risk should be compared against. With no deaths the two are the same
+#    number. The estimator used is returned in the table's `estimator` column and printed on the
+#    axis, so a figure can never claim one while showing the other.
 #
 # 2. THE HORIZONS MUST MATCH. PREVENT predicts 10 years. We have ~4-5. Comparing a 4.5-year observed
 #    risk to a 10-year predicted risk shows enormous "over-prediction" that is pure units error.
@@ -91,20 +101,72 @@ rescale_risk_to_horizon <- function(p10, horizon_years) {
   100 * (1 - (1 - p10)^(horizon_years / 10))
 }
 
-#' Observed (Kaplan-Meier) risk at a horizon within each predicted-risk group, plus predicted.
+#' Does this frame carry competing-event information? Same rule as has_competing_status() in
+#' extract_death.R, restated here so this file does not depend on that one being sourced.
+.has_competing <- function(d)
+  "competing_status" %in% names(d) && any(!is.na(d$competing_status))
+
+#' Observed cumulative incidence of ASCVD at one time point, with its 95% interval.
 #'
-#' @param at_risk  the frame from ascvd_status_at(), carrying the PREVENT risk column.
+#' Aalen-Johansen (death as a competing event) when `competing` is TRUE, 1 - Kaplan-Meier
+#' otherwise. RIGHT-CENSORING is handled the same way by both: a person censored at time c counts
+#' in the risk set up to c and not after, so they inform the estimate for exactly as long as they
+#' were watched. What differs is a DEATH -- KM removes the person as if they might still have had
+#' the event later, AJ records that they no longer can.
+#'
+#' @param g  rows of an at-risk frame, already filtered to the at-risk set.
+#' @param t_days  the horizon in days.
+#' @param competing  use Aalen-Johansen. Decided by the CALLER on the whole frame, never here per
+#'   group: a decile that happens to contain no deaths must be estimated the same way as its
+#'   neighbours.
+#' @return list(observed_pct, lower_pct, upper_pct, n_risk, deaths, estimator)
+.observed_risk_at <- function(g, t_days, competing = .has_competing(g)) {
+  if (isTRUE(competing)) {
+    # The factor's FIRST level is what survfit reads as censoring. All three levels are declared
+    # even when a group has no deaths, so the "ascvd" column always exists to be read by name --
+    # indexing the state matrix by position is how a group with no deaths returns the death column.
+    st  <- factor(g$competing_status, levels = 0:2, labels = c("censored", "ascvd", "death"))
+    fit <- survival::survfit(survival::Surv(g$followup_days, st) ~ 1)
+    s   <- summary(fit, times = t_days, extend = TRUE)
+    ps  <- matrix(s$pstate, ncol = length(fit$states), dimnames = list(NULL, fit$states))
+    lo  <- matrix(s$lower,  ncol = length(fit$states), dimnames = list(NULL, fit$states))
+    hi  <- matrix(s$upper,  ncol = length(fit$states), dimnames = list(NULL, fit$states))
+    nr  <- matrix(s$n.risk, ncol = length(fit$states))
+    # With zero ASCVD events in a group the variance is 0 and survfit returns NA bounds. The
+    # estimate is a real 0%, so keep the point and let the interval be missing rather than invented.
+    list(observed_pct = 100 * unname(ps[1, "ascvd"]), lower_pct = 100 * unname(lo[1, "ascvd"]),
+         upper_pct = 100 * unname(hi[1, "ascvd"]), n_risk = unname(nr[1, 1]),
+         deaths = sum(g$competing_status == 2L, na.rm = TRUE), estimator = "Aalen-Johansen")
+  } else {
+    fit <- survival::survfit(survival::Surv(g$followup_days, g$event) ~ 1)
+    s   <- summary(fit, times = t_days, extend = TRUE)
+    # survfit's `upper` bounds SURVIVAL, so it becomes the LOWER bound on risk.
+    list(observed_pct = 100 * (1 - s$surv[1]), lower_pct = 100 * (1 - s$upper[1]),
+         upper_pct = 100 * (1 - s$lower[1]), n_risk = s$n.risk[1], deaths = NA_integer_,
+         estimator = "Kaplan-Meier")
+  }
+}
+
+#' Observed risk at a horizon within each predicted-risk group, plus predicted.
+#'
+#' @param at_risk  the frame from ascvd_status_at(), carrying the PREVENT risk column. If it has been
+#'   through apply_competing_death() the observed risk is Aalen-Johansen; otherwise Kaplan-Meier.
 #' @param horizon_years  the horizon to evaluate at. Must be <= the follow-up actually available.
 #' @param n_groups  10 for deciles (what the paper uses), 5 if events are scarce.
 #' @param by_sex  compute within sex.
-#' @return data.frame(sex, group, n, events, predicted_10yr, predicted_horizon, observed_pct,
-#'                    lower_pct, upper_pct)
+#' @return data.frame(stratum, group, n, events, deaths, predicted_10yr, predicted_horizon,
+#'                    observed_pct, lower_pct, upper_pct, n_risk_at_horizon, estimator)
 calibration_table <- function(at_risk, horizon_years, n_groups = 10, by_sex = FALSE) {
   rc <- .find_risk_col(at_risk)
   d  <- at_risk[!is.na(at_risk$event) & !is.na(at_risk[[rc]]) &
                 !is.na(at_risk$followup_days) & at_risk$followup_days >= 0, , drop = FALSE]
   if (!nrow(d)) return(NULL)
   d$.risk <- as.numeric(d[[rc]])
+  competing <- .has_competing(d)
+  if (competing && any(is.na(d$competing_status)))
+    stop("calibration_table(): `competing_status` is NA for ", sum(is.na(d$competing_status)),
+         " at-risk row(s). Every at-risk person must have one of 0/1/2 -- run the frame through
+  apply_competing_death() as a whole rather than attaching the column by hand.", call. = FALSE)
   strata_var <- if (isTRUE(by_sex) && "sex" %in% names(d)) d$sex else rep("all", nrow(d))
   d$.stratum <- as.character(strata_var)
 
@@ -116,18 +178,18 @@ calibration_table <- function(at_risk, horizon_years, n_groups = 10, by_sex = FA
     if (length(brk) < 3) return(NULL)
     g$.grp <- cut(g$.risk, breaks = brk, include.lowest = TRUE, labels = FALSE)
     rows <- lapply(sort(unique(g$.grp)), function(k) {
-      gk <- g[g$.grp == k, , drop = FALSE]
-      fit <- survival::survfit(survival::Surv(gk$followup_days, gk$event) ~ 1)
-      s   <- summary(fit, times = horizon_years * 365.25, extend = TRUE)
+      gk  <- g[g$.grp == k, , drop = FALSE]
+      obs <- .observed_risk_at(gk, horizon_years * 365.25, competing = competing)
       data.frame(
         stratum = gk$.stratum[1], group = k, n = nrow(gk), events = sum(gk$event == 1L),
+        deaths  = obs$deaths,
         predicted_10yr    = mean(gk$.risk),
         predicted_horizon = mean(rescale_risk_to_horizon(gk$.risk, horizon_years)),
-        # survfit's `upper` bounds SURVIVAL, so it becomes the LOWER bound on risk.
-        observed_pct = 100 * (1 - s$surv[1]),
-        lower_pct    = 100 * (1 - s$upper[1]),
-        upper_pct    = 100 * (1 - s$lower[1]),
-        n_risk_at_horizon = s$n.risk[1],
+        observed_pct = obs$observed_pct,
+        lower_pct    = obs$lower_pct,
+        upper_pct    = obs$upper_pct,
+        n_risk_at_horizon = obs$n_risk,
+        estimator = obs$estimator,
         stringsAsFactors = FALSE)
     })
     do.call(rbind, rows)
@@ -142,6 +204,12 @@ calibration_table <- function(at_risk, horizon_years, n_groups = 10, by_sex = FA
 #'
 #' Unaffected by the 10-year-vs-4-year horizon mismatch: concordance uses only the ORDER of predicted
 #' risk, not its scale. So when calibration is hard to compare, this still is.
+#'
+#' COMPETING DEATHS: this is the CAUSE-SPECIFIC C. It reads only `event` and `followup_days`, and
+#' after apply_competing_death() a person who died has event = 0 with follow-up ending at death --
+#' so they are compared with others only while alive. That is the conventional choice and the one
+#' comparable to the published C; the alternative (keeping the dead in the risk set forever, Wolbers
+#' 2009) answers a different question and is not what this computes.
 prevent_concordance <- function(at_risk, by_sex = FALSE) {
   rc <- .find_risk_col(at_risk)
   d  <- at_risk[!is.na(at_risk$event) & !is.na(at_risk[[rc]]) &
@@ -262,12 +330,15 @@ make_prevent_calibration_figures <- function(res, outdir = "figures", horizon_ye
       scale_y_continuous(labels = function(x) paste0(x, "%")) +
       labs(title = title, subtitle = subtitle,
            x = sprintf("Predicted %d-year risk (PREVENT)", horizon_years),
-           y = sprintf("Observed %d-year risk (Kaplan-Meier)", horizon_years),
+           y = sprintf("Observed %d-year risk (%s)", horizon_years, df$estimator[1]),
            caption = paste0("Points BELOW the dashed line = PREVENT over-predicts. Bars are 95% CI on",
-                            " the observed KM estimate.\n", cap_horizon,
-                            "\nObserved is Kaplan-Meier, NOT events/N — a crude proportion counts",
-                            " early-censored people as non-events\nand would manufacture exactly the",
-                            " over-prediction this figure tests for.")) +
+                            " the observed ", df$estimator[1], " estimate.\n", cap_horizon,
+                            "\nObserved is ", df$estimator[1], ", NOT events/N — a crude proportion",
+                            " counts early-censored people as non-events\nand would manufacture",
+                            " exactly the over-prediction this figure tests for.",
+                            if (identical(df$estimator[1], "Kaplan-Meier"))
+                              paste0("\nDeath is NOT modelled here (no competing_status on the",
+                                     " frame), so observed risk is biased UPWARD.") else "")) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),
             plot.caption = element_text(color = "grey45", size = 8.5, hjust = 0))

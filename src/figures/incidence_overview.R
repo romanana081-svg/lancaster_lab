@@ -82,9 +82,16 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #' @param min_days_panel_to_event  D-017, the advisor's 30-day rule: the complete PREVENT panel must
 #'   predate the event by at least this many days. Applied as a symmetric blanking window, so nobody
 #'   is at risk until landmark + this many days. Set 0 to measure what the rule costs.
+#' @param attach_death  end follow-up at death and record it as a COMPETING event
+#'   (apply_competing_death(), extract_death.R; D-021). FALSE by default so the lab-meeting figures
+#'   in this file, which are Kaplan-Meier and captioned "death not modelled", keep describing what
+#'   they compute. The poster route (03_mice.R) passes TRUE. The two therefore differ in who is at
+#'   risk -- people already dead at risk start are excluded only under TRUE -- and the frame's
+#'   `death_source` says which one you are holding.
 build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only = TRUE,
                                  attach_smoking_status = FALSE,
-                                 min_days_panel_to_event = 30) {
+                                 min_days_panel_to_event = 30,
+                                 attach_death = FALSE) {
   stopifnot(exists("extract_ascvd_events", mode = "function"),
             exists("extract_prevent_panel", mode = "function"))
   landmark        <- as.Date(landmark)
@@ -177,6 +184,31 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
                             event_classes = "acute_event", end_of_followup = end_of_followup,
                             min_days_panel_to_event = min_days_panel_to_event)
 
+  # DEATH (D-021). Applied to both outcome frames from ONE extraction, after the ASCVD verdicts, so
+  # that the prevalent / 30-day counts below mean what they meant before and the deaths are counted
+  # as their own rows rather than absorbed into them.
+  death_source <- "NOT attached: event-free people are censored at the CDR cutoff even if they died"
+  death_counts <- NULL; death_counts_acute <- NULL; deaths_by_year <- NULL
+  if (isTRUE(attach_death)) {
+    if (!exists("extract_death", mode = "function"))
+      stop("build_incidence_frame(): attach_death = TRUE but extract_death.R is not sourced.
+  source('src/phenotype/R/extract_death.R') first.", call. = FALSE)
+    deaths        <- extract_death(con)
+    at_risk       <- apply_competing_death(at_risk, deaths, end_of_followup)
+    at_risk_acute <- apply_competing_death(at_risk_acute, deaths, end_of_followup)
+    death_counts       <- attr(at_risk, "death_counts")
+    death_counts_acute <- attr(at_risk_acute, "death_counts")
+    # Deaths per calendar year among the cohort, for judging ASCERTAINMENT: a death table that
+    # thins out toward the cutoff is reporting lag, not falling mortality. Years, never dates --
+    # a minimum or maximum date is one participant's date of death.
+    dd <- at_risk$death_date[!is.na(at_risk$death_date)]
+    deaths_by_year <- if (length(dd)) table(format(dd, "%Y")) else NULL
+    death_source <- sprintf(
+      "`death` table, earliest date per person; %s of %s cohort members have a death record",
+      format(unname(death_counts["n_death_records"]), big.mark = ","),
+      format(nrow(cohort), big.mark = ","))
+  }
+
   # Age at first acute event, from year_of_birth (OMOP `person`). Approximate to the year, which is
   # all a histogram needs and all that is safe to show.
   yob <- DBI::dbGetQuery(con, "SELECT person_id, year_of_birth FROM person")
@@ -195,21 +227,27 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
              "Prevalent ASCVD at landmark (excluded)",
              sprintf("Event within %d days of the panel (excluded, D-017)",
                      min_days_panel_to_event),
+             if (isTRUE(attach_death)) "Died on or before risk start (excluded, D-021)",
              "At-risk set",
              "Incident ASCVD, all classes (D-016)",
-             "  of which acute events (literature-comparable)"),
+             "  of which acute events (literature-comparable)",
+             if (isTRUE(attach_death)) "Died before any ASCVD event (competing event, D-021)"),
     n = c(nrow(panel), nrow(cohort),
           sum(at_risk$ascvd_status == "prevalent"),
           sum(at_risk$ascvd_status == "excluded_short_interval"),
+          if (isTRUE(attach_death)) sum(at_risk$ascvd_status == "excluded_died_before_risk_start"),
           sum(at_risk$ascvd_status %in% c("event_free", "incident")),
           sum(at_risk$ascvd_status == "incident"),
-          sum(at_risk_acute$ascvd_status == "incident")),
+          sum(at_risk_acute$ascvd_status == "incident"),
+          if (isTRUE(attach_death)) unname(death_counts["n_competing_death"])),
     stringsAsFactors = FALSE)
 
   list(events = events, cohort = cohort, at_risk = at_risk, at_risk_acute = at_risk_acute,
        acute = acute, counts = counts, landmark = landmark, end_of_followup = end_of_followup,
        smoking_source = smoking_source, prevent_source = prevent_source,
-       min_days_panel_to_event = min_days_panel_to_event)
+       min_days_panel_to_event = min_days_panel_to_event,
+       death_source = death_source, death_counts = death_counts,
+       death_counts_acute = death_counts_acute, deaths_by_year = deaths_by_year)
 }
 
 #' Observed cumulative incidence after the landmark (Kaplan-Meier complement).

@@ -16,6 +16,10 @@
 # If you have already run 01_check.R in this session, pass its landmark so the two analyses agree
 # about who was studied:  run_mice_abstract(landmark = as.Date("YYYY-MM-DD"))
 #
+# TO REPRODUCE THE POSTER'S WINDOW EXACTLY (the 2026-09-09 run, now with death wired in):
+#   out <- run_mice_abstract(landmark = as.Date("2020-01-01"),
+#                            end_of_followup = as.Date("2022-07-01"), horizon_years = 2)
+#
 # REHEARSE IT OFFLINE FIRST (neither needs the Workbench, both take under a minute):
 #   run_mice_abstract_fixture()      stage 1 against the fixture DB: connect, build the frame, score
 #                                    the panel, carve the arms. PASSES by stopping on an empty arm --
@@ -24,9 +28,32 @@
 #
 # It writes, and every one of them is aggregate-only and safe to paste back:
 #   reports/abstract_<date>.txt        the structured abstract, numbers already substituted
-#   reports/mice_validation_<date>.txt complete-case vs MICE side by side, plus the diagnostics
+#   reports/mice_validation_<date>.txt complete-case vs imputed side by side, plus the diagnostics
 #   figures/21_calibration_mice_by_sex.png
+#   figures/21b_calibration_poster.png   the same plot with no title or caption, 300 dpi -- the
+#                                        poster supplies its own, and a screenshot of figure 21 is
+#                                        how the last poster ended up with an upscaled image
 #   figures/22_smoking_imputation_check.png
+#
+# ------------------------------------------------------------------------------------------------
+# TWO THINGS THAT CHANGED ON 2026-09-29 (D-021), BOTH FROM REVIEW OF THE POSTER
+#
+# 1. OBSERVED RISK IS AALEN-JOHANSEN, NOT KAPLAN-MEIER. Death is now extracted (extract_death.R)
+#    and treated as a COMPETING EVENT: follow-up ends at the first of ASCVD, death, or the CDR
+#    cutoff, and only the last of those is right-censoring. People already dead when risk starts
+#    are excluded. So every N, C and slope from before this date was computed on a slightly
+#    different cohort -- re-run, do not patch the old numbers.
+#
+# 2. THE METHOD IS CALLED "MULTIPLE IMPUTATION", NOT "MICE", IN EVERYTHING THIS FILE WRITES.
+#    MICE means multiple imputation by CHAINED EQUATIONS: several incomplete variables, each
+#    imputed from the others in turn, cycling until the chain settles. We impute ONE variable
+#    (smoking) from fully observed predictors. There is no chain -- it is a single logistic
+#    imputation model, drawn m times. Calling that MICE claims a procedure that did not happen.
+#    The R PACKAGE is still `mice` (it is simply the software that fits the model), which is why
+#    this file, its functions and its output filenames keep the name: renaming them would break
+#    the run instructions people already have, to fix a problem that only exists in prose. If
+#    `impute_vars` is ever widened to several variables, the chain is real and the text this file
+#    writes says "chained equations" again -- see .mice_method_phrase().
 #
 # ------------------------------------------------------------------------------------------------
 # WHAT THIS IS FOR
@@ -54,7 +81,8 @@
 # against the numbers. Three of those markers are not stylistic — they are the caveats that make the
 # difference between a defensible abstract and a retracted one, and they are listed at the foot of the
 # validation report:
-#   * death is not wired in, so observed risk (and the calibration slope) is biased UPWARD;
+#   * death comes from EHR records with no cause attached: it is under-ascertained, and a fatal
+#     ASCVD event with no diagnosis code is counted as a competing death, not as ASCVD;
 #   * this is the EHR cohort, not the srWGS cohort (A-017);
 #   * calibration is only claimable alongside the incidence check — under-ascertained outcomes and a
 #     genuinely over-predicting model look identical on a calibration plot.
@@ -166,12 +194,15 @@
 #' @param landmark,end_of_followup  NULL derives them exactly as the main run does. Supply them to
 #'   pin this analysis to a run you already have, so the two agree about who was studied.
 #' @param seed  passed to mice. Quote it in the methods section.
+#' @param attach_death  treat death as a competing event (D-021). TRUE, and FALSE exists only to
+#'   reproduce the pre-2026-09-29 Kaplan-Meier numbers: the report then says Kaplan-Meier, and says
+#'   that death was treated as censoring.
 #' @return invisibly, list(complete_case, mice, imputation, horizon_years, landmark, paths, frame).
 run_mice_abstract <- function(con = NULL, m = 5, impute_vars = "smoking",
                               outcome = c("acute", "broad"), horizon_years = NULL,
                               landmark = NULL, end_of_followup = NULL,
                               figdir = "figures", repdir = "reports",
-                              seed = 20260901L, copy_to_bucket = TRUE) {
+                              seed = 20260901L, copy_to_bucket = TRUE, attach_death = TRUE) {
   outcome <- match.arg(outcome)
   if (!file.exists("src/figures/survival_curves.R"))
     stop("run_mice_abstract(): working directory is not the repo root.
@@ -209,9 +240,10 @@ run_mice_abstract <- function(con = NULL, m = 5, impute_vars = "smoking",
 
   fr <- build_incidence_frame(con, landmark, end_of_followup,
                               scorable_only = FALSE, attach_smoking_status = TRUE,
-                              min_days_panel_to_event = 30)
+                              min_days_panel_to_event = 30, attach_death = attach_death)
   at_risk <- if (outcome == "acute") fr$at_risk_acute else fr$at_risk
   if (!is.null(fr$prevent_source)) say("  PREVENT: %s", fr$prevent_source)
+  say("  death  : %s", fr$death_source)
   if (grepl("^NOT SCORED", fr$prevent_source %||% ""))
     stop("run_mice_abstract(): the panel was NOT SCORED, so neither arm has a risk to validate.
   The reason is printed above and it is almost always the AHAprevent package. Fix that first —
@@ -236,6 +268,9 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
                                      seed = 20260901L, copy_to_bucket = TRUE, frame = NULL) {
   say <- function(...) message(sprintf(...))
   for (d in c(figdir, repdir)) if (!dir.exists(d)) dir.create(d, recursive = TRUE)
+  # The report counts how follow-up ended whether or not death was attached, so it needs this file
+  # even on a frame that never went near the death table.
+  if (!exists("followup_endings", mode = "function")) source("src/phenotype/R/extract_death.R")
   risk_col <- .find_risk_col(at_risk)
 
   # -- 2. the two arms ----------------------------------------------------------------------------
@@ -252,6 +287,11 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
       format(nrow(mice_all) - nrow(mice_set), big.mark = ","),
       format(sum(is.na(mice_set$smoking)), big.mark = ","))
   .mice_require_arms(cc_set, mice_set, cc_all, mice_all, landmark)
+  estimator <- if (.has_competing(mice_set)) "Aalen-Johansen" else "Kaplan-Meier"
+  say("  observed risk : %s%s", estimator,
+      if (estimator == "Kaplan-Meier")
+        " -- no competing_status on the frame, so DEATH IS TREATED AS CENSORING" else
+        " -- death before ASCVD is a competing event")
 
   # One horizon for both arms. Derived from the MICE set because it is the superset; evaluating the
   # two arms at different horizons would make the C-statistics incomparable for a reason invisible in
@@ -309,10 +349,15 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   .mice_figures(mi_cal_fig, imp, scored, mice_set, horizon_years, outcome, figdir, m)
 
   # -- report -------------------------------------------------------------------------------------
+  died_first <- function(d) if ("ascvd_status" %in% names(d))
+    sum(d$ascvd_status == "excluded_died_before_risk_start", na.rm = TRUE) else NA_integer_
   paths <- .mice_write(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
                        landmark, end_of_followup, horizon_years, outcome, m, impute_vars,
                        seed, repdir, risk_col,
-                       n_panel = c(cc = nrow(cc_all), mice = nrow(mice_all)))
+                       n_panel = c(cc = nrow(cc_all), mice = nrow(mice_all)),
+                       n_died_first = c(cc = died_first(cc_all), mice = died_first(mice_all)),
+                       death_years = if ("death_date" %in% names(mice_all))
+                                       mice_all$death_date[!is.na(mice_all$death_date)] else NULL)
 
   if (isTRUE(copy_to_bucket)) .mice_bucket(figdir, repdir, say)
 
@@ -338,30 +383,49 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   }
   suppressPackageStartupMessages(library(ggplot2))
 
-  # 21. the calibration plot, MICE arm.
+  # 21. the calibration plot, imputed arm.
   if (!is.null(cal_fig) && nrow(cal_fig)) {
+    est <- if ("estimator" %in% names(cal_fig)) cal_fig$estimator[1] else "Kaplan-Meier"
     lim <- c(0, max(c(cal_fig$predicted_horizon, cal_fig$upper_pct), na.rm = TRUE) * 1.08)
-    p <- ggplot(cal_fig, aes(predicted_horizon, observed_pct)) +
+    base <- ggplot(cal_fig, aes(predicted_horizon, observed_pct)) +
       geom_abline(slope = 1, intercept = 0, colour = "grey55", linetype = "22") +
       geom_errorbar(aes(ymin = lower_pct, ymax = upper_pct), width = 0, colour = "grey60") +
       geom_point(size = 2.8, colour = "#4C72B0") +
       facet_wrap(~ stratum) + coord_equal(xlim = lim, ylim = lim) +
       scale_x_continuous(labels = function(x) paste0(x, "%")) +
-      scale_y_continuous(labels = function(x) paste0(x, "%")) +
+      scale_y_continuous(labels = function(x) paste0(x, "%"))
+    xl <- sprintf("Predicted %d-year risk (PREVENT)", horizon_years)
+    yl <- sprintf("Observed %d-year risk (%s)", horizon_years, est)
+    p <- base +
       labs(title = "PREVENT calibration after multiple imputation",
            subtitle = sprintf("%s ASCVD - deciles within sex - m = %d imputations - N = %s",
                               outcome, m, format(nrow(mice_set), big.mark = ",")),
-           x = sprintf("Predicted %d-year risk (PREVENT)", horizon_years),
-           y = sprintf("Observed %d-year risk (Kaplan-Meier)", horizon_years),
+           x = xl, y = yl,
            caption = paste0("Points BELOW the line = over-prediction. Plotted on the across-",
                             "imputation MEAN predicted risk;\nthe quoted calibration slope and its ",
-                            "interval come from Rubin's rules, not from this figure.\nDeath is not ",
-                            "wired in, so observed risk here is biased UPWARD.")) +
+                            "interval come from Rubin's rules, not from this figure.\n",
+                            if (est == "Aalen-Johansen")
+                              paste0("Observed risk is the Aalen-Johansen cumulative incidence: ",
+                                     "death before ASCVD is a competing event, not censoring.")
+                            else paste0("Death is NOT modelled (treated as censoring), so observed ",
+                                        "risk here is biased UPWARD."))) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),
             plot.caption = element_text(colour = "grey45", size = 8.5, hjust = 0))
     ggsave(file.path(figdir, "21_calibration_mice_by_sex.png"), p,
            width = 10, height = 6, dpi = 150, bg = "white")
+
+    # 21b. the same data for the POSTER: no title, no caption (the poster has its own), larger
+    # type, 300 dpi. Identical points and limits, so the two cannot disagree.
+    pp <- base + labs(x = xl, y = yl) +
+      theme_minimal(base_size = 18) +
+      theme(panel.grid.minor = element_blank(), strip.text = element_text(size = 18),
+            # Room between the facets and at the right edge: without it the last tick label of one
+            # panel runs into the first of the next, and the rightmost one is clipped by the page.
+            panel.spacing = grid::unit(2.2, "lines"),
+            plot.margin = ggplot2::margin(8, 28, 8, 8))
+    ggsave(file.path(figdir, "21b_calibration_poster.png"), pp,
+           width = 12, height = 6.6, dpi = 300, bg = "white")
   }
 
   # 22. the diagnostic a reviewer asks for: do the imputed values look like the observed ones?
@@ -429,7 +493,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 #'
 #' @return list(arms, benchmark, calibration) — each a character vector of complete sentences, or a
 #'   [[ ]] marker when the inputs were too thin to say anything.
-.mice_verdict <- function(cc_c, mi_c, mi_slope, mc = .mice_min_cell()) {
+.mice_verdict <- function(cc_c, mi_c, mi_slope, mc = .mice_min_cell(), death_modelled = FALSE) {
   sexes  <- c("female", "male")
   usable <- function(r) !is.null(r) && nrow(r) && (is.na(r$events[1]) || r$events[1] >= mc)
   # The stratum labels are the panel's coding; an abstract says "women" and "men". Translating at the
@@ -501,8 +565,13 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
       # One line per sex: these sentences carry two numbers and a clause each, and a single joined
       # line ran past 160 characters, which a submission form silently reflows into nonsense.
       c("  The pooled calibration slope was:", parts,
-        "  Note the direction of the known bias before interpreting this: deaths are not ascertained,",
-        "  so observed risk is over-stated and the slope is biased UPWARD.")
+        if (isTRUE(death_modelled))
+          c("  Observed risk is the Aalen-Johansen cumulative incidence, with death before ASCVD as a",
+            "  competing event. Deaths are under-ascertained in EHR data, so some residual upward bias",
+            "  in observed risk remains.")
+        else
+          c("  Note the direction of the known bias before interpreting this: deaths are not",
+            "  ascertained, so observed risk is over-stated and the slope is biased UPWARD."))
   }
 
   list(arms = arms, benchmark = bench, calibration = calib)
@@ -510,11 +579,42 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 
 # ---- the two written artifacts ---------------------------------------------------------------------
 
+#' How the imputation is named in prose. One incomplete variable is multiple imputation from a
+#' single model; "chained equations" is only true when there is more than one to chain (see the
+#' header, point 2 of the 2026-09-29 note).
+.mice_method_phrase <- function(impute_vars, method, m) {
+  model <- c(logreg = "a logistic regression imputation model",
+             polyreg = "a multinomial logistic imputation model",
+             pmm = "predictive mean matching")
+  if (length(impute_vars) > 1)
+    return(sprintf("multiple imputation by chained equations (m = %d)", m))
+  mm <- unname(model[as.character(method)[1]])
+  if (is.na(mm)) sprintf("multiple imputation (m = %d)", m)
+  else sprintf("multiple imputation (m = %d) from %s", m, mm)
+}
+
+#' Observed risk at the horizon for one stratum, under BOTH estimators, as printable text.
+#'
+#' The observed events are not imputed, so this does not depend on the imputation at all -- it is
+#' the one place the size of the Kaplan-Meier -> Aalen-Johansen change can be read directly.
+.mice_observed_both <- function(d, horizon_years, mc) {
+  if (sum(d$event == 1L, na.rm = TRUE) < mc) return(c(aj = "suppressed", km = "suppressed"))
+  f <- function(o) sprintf("%.2f%% (%.2f-%.2f)", o$observed_pct, o$lower_pct, o$upper_pct)
+  t_days <- horizon_years * 365.25
+  c(aj = if (.has_competing(d)) f(.observed_risk_at(d, t_days, competing = TRUE)) else "-",
+    km = f(.observed_risk_at(d, t_days, competing = FALSE)))
+}
+
 .mice_write <- function(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
                         landmark, end_of_followup, horizon_years, outcome, m, impute_vars,
-                        seed, repdir, risk_col, n_panel = NULL) {
+                        seed, repdir, risk_col, n_panel = NULL, n_died_first = NULL,
+                        death_years = NULL) {
   mc     <- .mice_min_cell()
   sexes  <- c("female", "male")
+  death_modelled <- .has_competing(mice_set)
+  estimator <- if (death_modelled) "Aalen-Johansen" else "Kaplan-Meier"
+  end_cc <- followup_endings(cc_set, horizon_years)
+  end_mi <- followup_endings(mice_set, horizon_years)
   ev_cc  <- sum(cc_set$event == 1L, na.rm = TRUE)
   ev_mi  <- sum(mice_set$event == 1L, na.rm = TRUE)
   n_add  <- nrow(mice_set) - nrow(cc_set)
@@ -538,15 +638,20 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   rowf <- function(lab, a, b) sprintf("  %-34s %-28s %-28s", lab, a, b)
 
   rep_lines <- c(
-    sprintf("MICE VALIDATION OF PREVENT — %s", Sys.Date()),
+    sprintf("MULTIPLE-IMPUTATION VALIDATION OF PREVENT — %s", Sys.Date()),
     sprintf("CDR        : %s", Sys.getenv("WORKSPACE_CDR", "<unset — offline fixture run>")),
     sprintf("landmark   : %s -> %s (%.2f years of follow-up)",
             format(landmark), format(end_of_followup), yrs),
     sprintf("outcome    : %s ASCVD | horizon %d year(s) | risk column %s",
             outcome, horizon_years, risk_col),
-    sprintf("imputation : mice, m = %d, seed = %d, imputing %s (%s)",
-            m, seed, paste(impute_vars, collapse = ", "),
-            paste(sprintf("%s=%s", names(imp$method), imp$method), collapse = " ")),
+    sprintf("imputation : %s", .mice_method_phrase(impute_vars, imp$method, m)),
+    sprintf("             R package mice, seed = %d, imputing %s (%s)%s",
+            seed, paste(impute_vars, collapse = ", "),
+            paste(sprintf("%s=%s", names(imp$method), imp$method), collapse = " "),
+            if (length(impute_vars) == 1) " — ONE variable, so no chained equations" else ""),
+    sprintf("observed   : %s%s", estimator,
+            if (death_modelled) " — death before ASCVD is a competing event"
+            else " — death NOT modelled, treated as censoring (observed risk biased UPWARD)"),
     sprintf("             outcome in the imputation model: %s",
             if (!imp$used_outcome)
               "NO — C-statistics below are biased DOWNWARD; re-run with use_outcome = TRUE"
@@ -557,13 +662,16 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     sprintf("suppression: counts and estimates below %d are printed as '<%d' or suppressed", mc, mc),
 
     hdr("1. WHAT IMPUTATION BOUGHT"),
-    rowf("", "COMPLETE CASE", "MICE"),
+    rowf("", "COMPLETE CASE", "MULTIPLE IMPUTATION"),
     if (!is.null(n_panel))
       rowf("panel rows", .mice_n(unname(n_panel["cc"])), .mice_n(unname(n_panel["mice"]))),
     if (!is.null(n_panel))
-      rowf("  less prevalent / <30d / no f-up",
+      rowf("  less prevalent/<30d/died/no f-up",
            .mice_n(unname(n_panel["cc"]) - nrow(cc_set)),
            .mice_n(unname(n_panel["mice"]) - nrow(mice_set))),
+    if (!is.null(n_died_first) && death_modelled)
+      rowf("    of which dead at risk start", .mice_n(unname(n_died_first["cc"])),
+           .mice_n(unname(n_died_first["mice"]))),
     rowf("at-risk N (the analysis sample)", .mice_n(nrow(cc_set)), .mice_n(nrow(mice_set))),
     rowf("incident events", .mice_n(ev_cc), .mice_n(ev_mi)),
     rowf("smoking", "observed for all",
@@ -573,13 +681,13 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     # on a different cohort. It costs one line to make the sentence self-sourcing.
     rowf("median predicted 10-yr risk", med(cc_set), med(mice_set)),
     "",
-    sprintf("  MICE adds %s people (+%.0f%%) and %s events. Those people are in the cohort because",
+    sprintf("  Imputation adds %s people (+%.0f%%) and %s events. They are in the cohort because",
             .mice_n(n_add), pct_add, .mice_n(ev_mi - ev_cc)),
     "  their measurements were complete and only the SURVEY answer was missing — nobody was added by",
     "  inventing a lab value.",
 
-    hdr("2. DISCRIMINATION — Harrell's C (the headline; robust to the caveats in section 5)"),
-    rowf("", "COMPLETE CASE", "MICE (pooled)"),
+    hdr("2. DISCRIMINATION — Harrell's C (the headline; robust to the caveats in section 6)"),
+    rowf("", "COMPLETE CASE", "IMPUTED (pooled)"),
     unlist(lapply(sexes, function(s) {
       a <- .mice_row(cc_c, s); b <- .mice_row(mi_c, s)
       rowf(sprintf("C, %s", s),
@@ -591,9 +699,12 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     sprintf("  information (FMI) across strata: %s. FMI well above the fraction of missing VALUES", fmi),
     "  means the imputation model is carrying more weight than the data — report it, and consider a",
     "  larger m before a stronger claim.",
+    if (death_modelled)
+      c("  This is the CAUSE-SPECIFIC C: a person who died is compared with others only up to the",
+        "  date of death, and is censored there."),
 
-    hdr("3. CALIBRATION — slope of observed on predicted, by decile"),
-    rowf("", "COMPLETE CASE", "MICE (pooled)"),
+    hdr(sprintf("3. CALIBRATION — slope of observed (%s) on predicted, by decile", estimator)),
+    rowf("", "COMPLETE CASE", "IMPUTED (pooled)"),
     unlist(lapply(sexes, function(s) {
       a <- .mice_row(cc_slope, s); b <- .mice_row(mi_slope, s)
       rowf(sprintf("slope, %s", s), .mice_ci(a, "slope", fmt = "%.2f"),
@@ -614,13 +725,77 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     "  The two SHOULD differ (that is the bias complete-case analysis has); what would be wrong is an",
     "  implausible imputed value or wild variation across m.",
 
-    hdr("5. CAVEATS THAT BELONG IN THE ABSTRACT, NOT JUST THE PAPER"),
-    "  1. DEATH IS NOT WIRED IN. Competing risk is treated as censoring, so observed risk — and the",
-    "     calibration slope — is biased UPWARD. This is the largest methodological gap.",
+    hdr("5. HOW FOLLOW-UP ENDED — right-censoring and competing events"),
+    sprintf("  Follow-up starts 30 days after the %s landmark and ends at the FIRST of:",
+            format(landmark)),
+    "    an ASCVD event            — the outcome",
+    if (death_modelled)
+      "    death                     — a COMPETING event: the person can no longer have the outcome"
+    else
+      "    (death is NOT modelled in this run: the dead are censored at the cutoff like the living)",
+    sprintf("    %s                — RIGHT-CENSORING: the data end, the person's risk does not",
+            format(end_of_followup)),
+    "  Censoring here is ADMINISTRATIVE ONLY. Loss to follow-up is not observed, so everyone is",
+    "  assumed to be under observation until the cutoff.",
+    "",
+    rowf("", "COMPLETE CASE", "MULTIPLE IMPUTATION"),
+    rowf("at-risk N", .mice_n(end_cc[["n"]]), .mice_n(end_mi[["n"]])),
+    rowf("  ASCVD event", .mice_n(end_cc[["ascvd"]]), .mice_n(end_mi[["ascvd"]])),
+    rowf("  died before ASCVD (competing)",
+         if (death_modelled) .mice_n(end_cc[["death"]]) else "not modelled",
+         if (death_modelled) .mice_n(end_mi[["death"]]) else "not modelled"),
+    rowf("  right-censored at the cutoff", .mice_n(end_cc[["censored"]]),
+         .mice_n(end_mi[["censored"]])),
+    rowf(sprintf("    censored before %d-y horizon", horizon_years),
+         .mice_n(end_cc[["censored_before_horizon"]]),
+         .mice_n(end_mi[["censored_before_horizon"]])),
+    "",
+    if (isTRUE(end_mi[["censored_before_horizon"]] == 0))
+      c(sprintf("  NOBODY is censored before the %d-year horizon, because the only censoring date is",
+                horizon_years),
+        "  after it. The observed risk at the horizon therefore does not depend on how censoring is",
+        "  handled: Aalen-Johansen equals events-by-horizon / N exactly. Kaplan-Meier differs from it",
+        "  ONLY through the deaths, which is the whole reason for the change of estimator.")
+    else
+      c(sprintf("  Some people are censored before the %d-year horizon, so the estimate at the horizon",
+                horizon_years),
+        "  rests on the censoring assumption (censoring independent of risk) for those people."),
+    "",
+    "  By sex, imputed arm (the poster's two N boxes):",
+    sprintf("  %-10s %-14s %-14s %-14s %-24s %-24s", "", "at-risk N", "ASCVD events",
+            "deaths", sprintf("observed %d-y, A-J", horizon_years),
+            sprintf("observed %d-y, 1-KM", horizon_years)),
+    unlist(lapply(sexes, function(s) {
+      g  <- mice_set[as.character(mice_set$sex) == s, , drop = FALSE]
+      e  <- followup_endings(g, horizon_years)
+      ob <- .mice_observed_both(g, horizon_years, mc)
+      sprintf("  %-10s %-14s %-14s %-14s %-24s %-24s", s, .mice_n(e[["n"]]), .mice_n(e[["ascvd"]]),
+              if (death_modelled) .mice_n(e[["death"]]) else "-", ob[["aj"]], ob[["km"]])
+    })),
+    "  A-J = Aalen-Johansen (death competing). 1-KM = Kaplan-Meier with death censored at the date",
+    "  of death. The gap between the two columns is the size of the bias the old estimator carried.",
+    if (death_modelled && length(death_years)) {
+      ty <- table(format(as.Date(death_years), "%Y"))
+      c("",
+        "  Death records per calendar year, among people with a complete panel (ASCERTAINMENT check:",
+        "  a count that falls toward the cutoff is reporting lag, not falling mortality):",
+        sprintf("    %s", paste(sprintf("%s: %s", names(ty), vapply(as.integer(ty), .mice_n,
+                                                                   character(1))),
+                                collapse = "   ")))
+    },
+
+    hdr("6. CAVEATS THAT BELONG IN THE ABSTRACT, NOT JUST THE PAPER"),
+    if (death_modelled)
+      c("  1. DEATH IS UNDER-ASCERTAINED AND HAS NO CAUSE. Deaths come from EHR records. A missed death",
+        "     leaves the person censored at the cutoff (observed risk biased UP); a fatal ASCVD event",
+        "     with no diagnosis code is counted as a competing death (observed risk biased DOWN).")
+    else
+      c("  1. DEATH IS NOT MODELLED. Competing risk is treated as censoring, so observed risk — and",
+        "     the calibration slope — is biased UPWARD. Re-run with attach_death = TRUE."),
     "  2. THIS IS THE EHR COHORT, not the srWGS cohort (A-017). Say 'participants with EHR data'.",
     "  3. ICD-10-CM only: events before ~Oct 2015 are invisible, so early years are left-truncated.",
     "  4. Censoring is at the CDR cutoff, not last contact — person-time is inflated, rates pushed DOWN.",
-    "  5. MICE assumes missing AT RANDOM given the model. If people conceal smoking for reasons",
+    "  5. Imputation assumes missing AT RANDOM given the model. If people conceal smoking for reasons",
     "     unrelated to anything measured here, that is MNAR and no imputation fixes it.",
     "  6. The smoking answer MAP is still provisional (extract_smoking.R); dm's medication list is",
     "     provisional (sql/05). Both feed the risk score.",
@@ -630,7 +805,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   writeLines(rep_lines, rep_path)
 
   # ---- the abstract draft -----------------------------------------------------------------------
-  verdict <- .mice_verdict(cc_c, mi_c, mi_slope, mc)
+  verdict <- .mice_verdict(cc_c, mi_c, mi_slope, mc, death_modelled = death_modelled)
   cfmt <- function(tbl, s) {
     r <- .mice_row(tbl, s)
     if (is.null(r) || (!is.na(r$events[1]) && r$events[1] < mc)) return("[[suppressed]]")
@@ -671,12 +846,20 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
             yrs, outcome),
     "  baseline panel was required to predate any event by at least 30 days. The published PREVENT",
     "  base equations were applied UNCHANGED — no coefficients were refitted. Missing smoking status",
-    sprintf("  was handled by multiple imputation by chained equations (m = %d), with the imputation", m),
-    "  model containing all PREVENT inputs plus the event indicator and the Nelson-Aalen cumulative",
-    "  hazard. Discrimination (Harrell's C) and the calibration slope of observed on predicted risk by",
-    sprintf("  decile were computed at %d year(s), separately by sex, and pooled across imputations",
+    sprintf("  was handled by %s,", .mice_method_phrase(impute_vars, imp$method, m)),
+    "  with the imputation model containing all PREVENT inputs plus the event indicator and the",
+    "  Nelson-Aalen cumulative hazard. Discrimination (Harrell's C) and the calibration slope of",
+    sprintf("  observed on predicted risk by decile were computed at %d year(s), separately by sex, and",
             horizon_years),
-    "  using Rubin's rules. Observed risk was estimated by Kaplan-Meier.",
+    "  pooled across imputations using Rubin's rules.",
+    if (death_modelled)
+      c("  Follow-up ended at the first of an ASCVD event, death, or the end of follow-up. Participants",
+        "  alive and free of ASCVD at the end of follow-up were right-censored on that date",
+        "  (administrative censoring); death before ASCVD was treated as a competing event. Observed",
+        "  risk was estimated with the Aalen-Johansen estimator.")
+    else
+      c("  Participants free of ASCVD at the end of follow-up were right-censored on that date.",
+        "  Observed risk was estimated by Kaplan-Meier, with death treated as censoring."),
     "",
     "RESULTS",
     sprintf("  Complete-case analysis included %s participants (%s incident events). Multiple",
@@ -704,8 +887,14 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     "    a genuinely over-predicting equation are indistinguishable on a calibration plot.]]",
     "",
     "LIMITATIONS (do not drop these to make the word count)",
-    "  Deaths were not ascertained, so competing risk was treated as censoring and observed risk is",
-    "  biased upward. Follow-up was shorter than the equations' 10-year horizon; predicted risk was",
+    if (death_modelled)
+      c("  Deaths were ascertained from EHR records, which are incomplete and carry no cause of death,",
+        "  so fatal ASCVD without a diagnosis code was counted as a competing death. Censoring was",
+        "  administrative only; loss to follow-up was not observed.")
+    else
+      c("  Deaths were not ascertained, so competing risk was treated as censoring and observed risk",
+        "  is biased upward."),
+    "  Follow-up was shorter than the equations' 10-year horizon; predicted risk was",
     "  rescaled under a constant-hazard assumption. Results describe participants with EHR data, not",
     "  the genomic cohort. Events before ~October 2015 are not captured. Smoking imputation assumes",
     "  missingness at random given the model.",
@@ -755,6 +944,7 @@ run_mice_abstract_synthetic <- function(n = 5000, m = 5, outdir = "reports/mice_
   source("src/figures/prevent_calibration.R")
   source("src/ascvd/prevent/run_prevent.R")
   source("src/phenotype/R/impute_panel.R")
+  source("src/phenotype/R/extract_death.R")
   source("src/ascvd/validation/paper_tables.R")
   source("src/ascvd/validation/pooled_validation.R")
   message("SYNTHETIC SMOKE TEST — every number below is made up and means nothing.")
@@ -782,8 +972,14 @@ run_mice_abstract_synthetic <- function(n = 5000, m = 5, outdir = "reports/mice_
             0.60 * d$dm + 0.30 * (d$sex == "male")
   t_evt  <- rexp(n, rate = 0.006 * exp(lp - mean(lp)))       # years to event
   t_cens <- runif(n, 1.5, 5.0)                               # administrative censoring
-  d$event          <- as.integer(t_evt <= t_cens)
-  d$followup_days  <- round(pmin(t_evt, t_cens) * 365.25)
+  # A competing death, commoner in the old -- so the Aalen-Johansen path, the three-way ending and
+  # the report's censoring section all execute offline. Drawn AFTER the event and censoring times,
+  # so those are the same numbers the pre-death version of this cohort had.
+  t_dth  <- rexp(n, rate = 0.004 * exp(0.07 * (d$age - 55)))
+  t_end  <- pmin(t_evt, t_dth, t_cens)
+  d$competing_status <- ifelse(t_evt == t_end, 1L, ifelse(t_dth == t_end, 2L, 0L))
+  d$event          <- as.integer(d$competing_status == 1L)
+  d$followup_days  <- round(t_end * 365.25)
 
   # MAR missingness: older people and people with diabetes are LESS likely to have answered the
   # survey. Depends on observed variables only, which is what MICE assumes and what makes the
