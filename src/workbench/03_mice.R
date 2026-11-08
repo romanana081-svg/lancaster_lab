@@ -570,8 +570,12 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
       if (!usable(r)) return(NULL)
       sprintf("  in %s, %.2f (95%% CI %.2f-%.2f), %s;", who(s), r$slope[1], r$lower[1], r$upper[1],
               if (r$lower[1] <= 1 && r$upper[1] >= 1) "consistent with the identity"
-              else if (r$upper[1] < 1) "below 1, i.e. PREVENT over-predicted"
-              else "above 1, i.e. PREVENT under-predicted")
+              # A slope is about SPREAD, not level: >1 means observed risk rose more steeply across
+              # deciles than predicted (predictions too compressed). Whether PREVENT over- or
+              # under-predicts ON AVERAGE is calibration-in-the-large -- observed vs mean predicted --
+              # which a slope cannot show. Corrected 2026-11-08; it used to say "under-predicted".
+              else if (r$upper[1] < 1) "below 1, i.e. predictions too SPREAD (overfit-like)"
+              else "above 1, i.e. predictions too COMPRESSED (risk rises faster than predicted)")
     }))
     parts <- unlist(parts)
     parts[length(parts)] <- sub(";$", ".", parts[length(parts)])   # last clause ends the sentence
@@ -811,9 +815,15 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 
     hdr("6. CAVEATS THAT BELONG IN THE ABSTRACT, NOT JUST THE PAPER"),
     if (death_modelled)
+      # Corrected 2026-11-08: this used to say a missed death biases observed risk UP. It does not.
+      # A dead person nobody recorded stays in the risk set until the cutoff, contributing time at
+      # risk in which no event can happen, so the hazard -- and observed risk -- is pushed DOWN.
+      # Both errors therefore point the same way. See the per-year death counts in section 5: in
+      # C2025Q4R6 they barely start before 2018, while per-person follow-up reaches back ~9 years.
       c("  1. DEATH IS UNDER-ASCERTAINED AND HAS NO CAUSE. Deaths come from EHR records. A missed death",
-        "     leaves the person censored at the cutoff (observed risk biased UP); a fatal ASCVD event",
-        "     with no diagnosis code is counted as a competing death (observed risk biased DOWN).")
+        "     keeps a dead person at risk until the cutoff (observed risk biased DOWN); a fatal ASCVD",
+        "     event with no diagnosis code is counted as a competing death (also biased DOWN). Check",
+        "     the deaths-per-year line in section 5 for the years ascertainment actually covers.")
     else
       c("  1. DEATH IS NOT MODELLED. Competing risk is treated as censoring, so observed risk — and",
         "     the calibration slope — is biased UPWARD. Re-run with attach_death = TRUE."),
@@ -931,7 +941,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
         "  is biased upward."),
     "  Follow-up was shorter than the equations' 10-year horizon; predicted risk was",
     "  rescaled under a constant-hazard assumption. Results describe participants with EHR data, not",
-    "  the genomic cohort. Events before ~October 2015 are not captured. Smoking imputation assumes",
+    "  the genomic cohort. Early years depend on how far back each site's EHR goes. Smoking imputation assumes",
     "  missingness at random given the model.",
     "",
     strrep("-", 96),

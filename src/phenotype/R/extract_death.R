@@ -50,9 +50,11 @@
 #     death, not as ASCVD. PREVENT's outcome includes CVD death, so this biases observed ASCVD risk
 #     DOWNWARD. It cannot be fixed from this table; it has to be stated.
 #   * DEATH IS UNDER-ASCERTAINED. Deaths come from EHR records, not from a linked death index. A
-#     missed death leaves the person right-censored at the cutoff, i.e. the old behaviour. So this
-#     moves the estimate toward the truth without reaching it -- report the death count, because a
-#     reader can judge from it how incomplete the ascertainment is.
+#     missed death leaves the person at risk until the cutoff -- time in which no event can occur --
+#     so observed risk is biased DOWN, the same direction as the no-cause trap above. So this moves
+#     the estimate toward the truth without reaching it -- report the death count, because a reader
+#     can judge from it how incomplete the ascertainment is. In C2025Q4R6 deaths among panel holders
+#     barely start before 2018 (59 that year), while per-person follow-up reaches back ~9 years.
 #   * A PERSON CAN HAVE SEVERAL DEATH ROWS (one per contributing site). The EARLIEST date is taken,
 #     in SQL, so the tie-break is deterministic and nothing raw comes over the wire.
 #   * AN ASCVD CODE DATED AFTER DEATH happens (billing lag, a death date recorded early). The rule

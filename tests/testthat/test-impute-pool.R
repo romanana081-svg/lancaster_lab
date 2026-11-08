@@ -278,8 +278,13 @@ test_that("the calibration sentence reads the interval against 1 in both directi
   under <- rbind(slope("female", 1.60, 1.30, 1.90), slope("male", 1.50, 1.25, 1.75))
   expect_match(paste(.mice_verdict(NULL, NULL, ident)$calibration, collapse = " "),
                "consistent with the identity")
-  expect_match(paste(.mice_verdict(NULL, NULL, over)$calibration,  collapse = " "), "over-predicted")
-  expect_match(paste(.mice_verdict(NULL, NULL, under)$calibration, collapse = " "), "under-predicted")
+  # A slope speaks to SPREAD, not to average level (2026-11-08), so the sentence must not claim
+  # over- or under-prediction -- that is calibration-in-the-large, which a slope cannot show.
+  over_txt  <- paste(.mice_verdict(NULL, NULL, over)$calibration,  collapse = " ")
+  under_txt <- paste(.mice_verdict(NULL, NULL, under)$calibration, collapse = " ")
+  expect_match(over_txt,  "too SPREAD")
+  expect_match(under_txt, "too COMPRESSED")
+  expect_false(grepl("over-predicted|under-predicted", paste(over_txt, under_txt)))
 })
 
 test_that("a small-cell stratum is never turned into a sentence", {
