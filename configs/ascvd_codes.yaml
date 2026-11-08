@@ -66,7 +66,13 @@ ascvd:
     class: chronic_disease
   - code_prefix: "I70"     # atherosclerosis
     class: chronic_disease
-  - code_prefix: "I73"     # other peripheral vascular disease
+  # I73 used to be listed whole. The 2026-11-08 Workbench audit showed it pulling in Raynaud
+  # (I73.00 alone: 6,001 people), which is vasospastic, not atherosclerotic. Decision 2026-11-08:
+  # PVD only -- Raynaud (I73.0), Buerger's (I73.1, inflammatory) and erythromelalgia (I73.81) are
+  # out, listed in excluded_deliberately. The ICD-9 entries below were cut the same way.
+  - code_prefix: "I73.89"  # other specified peripheral vascular diseases
+    class: chronic_disease
+  - code_prefix: "I73.9"   # peripheral vascular disease, unspecified
     class: chronic_disease
   - code_prefix: "Z95.1"   # presence of aortocoronary bypass graft -- history, not an event
     class: chronic_disease
@@ -134,16 +140,12 @@ ascvd:
   - code_prefix: "440"     # atherosclerosis                                     ~ I70
     class: chronic_disease
     vocabulary: ICD9CM
-  # 443 is split because 443.2x (arterial dissection) maps to ICD-10 I77.7, which is NOT in I73.
-  # 443.0 Raynaud is included ONLY because I73.0 is (I73 is listed whole above). If Raynaud is
-  # dropped from the outcome, drop it from BOTH: I73.0 and 443.0.
-  - code_prefix: "443.0"   # Raynaud syndrome                                    ~ I73.0
+  # 443 mirrors the cut I73 (PVD only, decision 2026-11-08): 443.0 Raynaud, 443.1 Buerger's and
+  # 443.82 erythromelalgia are excluded, and 443.2x (arterial dissection, ICD-10 I77.7) never was in.
+  - code_prefix: "443.81"  # peripheral angiopathy in diseases classified elsewhere ~ I79.8/E11.51
     class: chronic_disease
     vocabulary: ICD9CM
-  - code_prefix: "443.1"   # thromboangiitis obliterans                          ~ I73.1
-    class: chronic_disease
-    vocabulary: ICD9CM
-  - code_prefix: "443.8"   # other specified peripheral vascular disease          ~ I73.8
+  - code_prefix: "443.89"  # other peripheral vascular disease                    ~ I73.89
     class: chronic_disease
     vocabulary: ICD9CM
   - code_prefix: "443.9"   # peripheral vascular disease, unspecified             ~ I73.9
@@ -168,11 +170,41 @@ ascvd:
   # SEPARATE CLASS and not folded into acute_event: the primary analysis must be reportable BOTH WITH
   # AND WITHOUT it (Q-A1, T-015).
   # ------------------------------------------------------------------------------------------------
-  - code_prefix: "929"     # 92920-92944: PCI (angioplasty, stent)
+  # PCI, as EXPLICIT codes (decision 2026-11-08). This used to be the prefix "929", whose comment
+  # claimed 92920-92944 but which matched every 929xx code. The 2026-11-08 Workbench audit measured
+  # it: the single most common "revascularisation" was elective cardioversion (92960, 4,355 people),
+  # then intravascular imaging (92978, 2,852), then CPR, balloon pump, thrombolysis, valvuloplasty
+  # and pulmonary artery angioplasty -- each of which counted as an INCIDENT ASCVD EVENT (D-016).
+  # 2013+ PCI codes:
+  - {code_prefix: "92920", class: revascularisation}   # PTCA, single major coronary artery
+  - {code_prefix: "92921", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92924", class: revascularisation}   # atherectomy +/- PTCA
+  - {code_prefix: "92925", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92928", class: revascularisation}   # stent +/- PTCA/atherectomy
+  - {code_prefix: "92929", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92933", class: revascularisation}   # atherectomy + stent
+  - {code_prefix: "92934", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92937", class: revascularisation}   # PCI of bypass graft
+  - {code_prefix: "92938", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92941", class: revascularisation}   # PCI in acute MI (total/subtotal occlusion)
+  - {code_prefix: "92943", class: revascularisation}   # PCI of chronic total occlusion
+  - {code_prefix: "92944", class: revascularisation}   #   each additional branch
+  - {code_prefix: "92973", class: revascularisation}   # coronary thrombectomy (add-on to PCI)
+  # pre-2013 PCI codes (deleted 2013, still in older records):
+  - {code_prefix: "92980", class: revascularisation}   # stent, single vessel
+  - {code_prefix: "92981", class: revascularisation}   #   each additional vessel
+  - {code_prefix: "92982", class: revascularisation}   # balloon angioplasty, single vessel
+  - {code_prefix: "92984", class: revascularisation}   #   each additional vessel
+  - {code_prefix: "92995", class: revascularisation}   # atherectomy, single vessel
+  - {code_prefix: "92996", class: revascularisation}   #   each additional vessel
+  # CABG, the whole 33510-33536 family. This used to be "33510" and "33533" alone, which matched only
+  # the SINGLE-graft codes and silently missed 2-6 vein grafts (33511-33516), combined arterial-venous
+  # (33517-33523), reoperation (33530) and 2-4+ arterial grafts (33534-33536).
+  - code_prefix: "3351"    # 33510-33519: venous, and combined arterial-venous add-ons
     class: revascularisation
-  - code_prefix: "33510"   # CABG, venous
+  - code_prefix: "3352"    # 33521-33523: combined arterial-venous add-ons
     class: revascularisation
-  - code_prefix: "33533"   # CABG, arterial
+  - code_prefix: "3353"    # 33530 reoperation, 33533-33536 arterial
     class: revascularisation
   # ICD-9 procedure codes (inpatient procedures before ~Oct-2015 were coded ICD-9-CM volume 3, not
   # CPT). 36.04 (intracoronary thrombolytic infusion) is deliberately NOT listed: a drug, not a
@@ -229,6 +261,11 @@ snomed:
   - concept_code: "432504007"
     name: "Cerebral infarction"
     class: acute_event
+  - concept_code: "413439005"
+    name: "Acute ischemic heart disease"
+    class: acute_event
+    note: "Added 2026-11-08: the audit showed it falling through to IHD -> chronic (4,824 people),
+           but it is ICD-10 I24, which is acute. Must stay ABOVE IHD and BELOW preinfarction syndrome."
   - concept_code: "414545008"
     name: "Ischemic heart disease"
     class: chronic_disease
@@ -243,6 +280,20 @@ snomed:
     class: chronic_disease
 
 snomed_excluded:
+  # Arterial thrombosis / embolism (ICD-10 I74, not in the outcome) found under PAOD by the
+  # 2026-11-08 audit, and iatrogenic cerebral infarction (ICD-10 I97.8, not in the outcome).
+  - concept_code: "90958004"
+    name: "Thrombosis of arteries of lower extremity"
+    reason: "arterial thrombosis (I74), not atherosclerotic disease"
+  - concept_code: "82453008"
+    name: "Thrombosis of iliac artery"
+    reason: "arterial thrombosis (I74)"
+  - concept_code: "1010730002"
+    name: "Thromboembolus of artery of lower limb"
+    reason: "arterial embolism (I74)"
+  - concept_code: "441526008"
+    name: "Infarct of cerebrum due to iatrogenic cerebrovascular accident"
+    reason: "postprocedural infarct (I97.8), not in the ICD-10 outcome"
   - concept_code: "274100004"
     name: "Cerebral hemorrhage"
     reason: "haemorrhagic, not atherosclerotic (I61)"
@@ -265,6 +316,24 @@ excluded_deliberately:
     reason: "intracerebral haemorrhage -- haemorrhagic, not atherosclerotic"
   - code_prefix: "I26"
     reason: "pulmonary embolism -- thrombotic but not atherosclerotic ASCVD"
+  - code_prefix: "I73.0"
+    reason: "Raynaud -- vasospastic, not atherosclerotic (decision 2026-11-08)"
+  - code_prefix: "I73.1"
+    reason: "thromboangiitis obliterans (Buerger's) -- inflammatory (decision 2026-11-08)"
+  - code_prefix: "I73.81"
+    reason: "erythromelalgia (decision 2026-11-08)"
+  - code_prefix: "443.0"
+    reason: "ICD-9 Raynaud (= I73.0)"
+  - code_prefix: "443.1"
+    reason: "ICD-9 Buerger's (= I73.1)"
+  - code_prefix: "443.82"
+    reason: "ICD-9 erythromelalgia (= I73.81)"
+  - code_prefix: "92960"
+    reason: "elective cardioversion -- the largest '929' over-capture (4,355 people, 2026-11-08 audit)"
+  - code_prefix: "92950"
+    reason: "CPR"
+  - code_prefix: "92978"
+    reason: "intravascular coronary imaging (IVUS/OCT) -- diagnostic, not revascularisation"
   - code_prefix: "430"
     reason: "ICD-9 subarachnoid haemorrhage (= I60)"
   - code_prefix: "431"

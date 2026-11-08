@@ -265,22 +265,36 @@ test_that("a baseline after the end of follow-up warns rather than producing neg
 
 # ---------------------------------------------------------------------------- known gaps, pinned
 
-test_that("the CPT 929 prefix over-captures beyond its stated 92920-92944 intent", {
-  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
-  ev  <- extract_ascvd_events(con, .codes)
+test_that("CPT revascularisation is PCI and CABG only -- the '929' over-capture is gone (2026-11-08)", {
+  # This used to pin the defect: "929" matched every 929xx code. The 2026-11-08 Workbench audit
+  # measured it (elective cardioversion was the single most common "revascularisation"), and the
+  # prefix was replaced with explicit PCI codes. This now pins the fix.
+  def <- load_ascvd_codes(.codes)
+  cpt <- def$codes$code_prefix[def$codes$vocabulary_id == "CPT4"]
+  hits <- function(code) any(startsWith(code, cpt))
+  for (x in c("92950", "92953", "92960", "92961", "92970", "92977", "92978", "92979", "92986",
+              "92997"))
+    expect_false(hits(x), info = x)                        # CPR, pacing, cardioversion, IABP, ...
+  for (x in c("92920", "92928", "92941", "92943", "92980", "92982"))
+    expect_true(hits(x), info = x)                         # PCI, 2013+ and pre-2013
+  # CABG: every graft count, not just the single-graft codes the old list matched.
+  for (x in c("33510", "33511", "33516", "33517", "33523", "33533", "33534", "33536"))
+    expect_true(hits(x), info = x)
 
-  # THIS TEST PINS A KNOWN DEFECT SO IT CANNOT BE FIXED BY ACCIDENT OR FORGOTTEN.
-  # configs/ascvd_codes.yaml says `code_prefix: "929"  # 92920-92944: PCI`, but "929" also matches
-  # 92950 (CPR), 92953 (temporary pacing), 92960 (cardioversion) and 92986+ (valvuloplasty) -- none
-  # of which are coronary revascularisation. The fixture contains 92953 and 92957.
-  #
-  # When the code list is narrowed (with an authoritative source, not from memory), this test SHOULD
-  # fail -- and the failure is the signal that the fix landed. Update it then, not before.
-  rev_codes <- ev$first_code[ev$ascvd_class == "revascularisation"]
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev  <- suppressWarnings(extract_ascvd_events(con, .codes))
+  rev_codes <- ev$first_code[ev$ascvd_class == "revascularisation" & ev$source_table == "procedure"]
   skip_if(length(rev_codes) == 0, "fixture has no revascularisation codes")
-  out_of_range <- rev_codes[as.integer(rev_codes) > 92944]
-  expect_true(length(out_of_range) > 0,
-              info = "expected the over-capture to still be present; if this fails the list was narrowed")
+  expect_true(all(vapply(rev_codes, hits, logical(1))))
+})
+
+test_that("PVD is PVD only: Raynaud, Buerger's and erythromelalgia are out (2026-11-08)", {
+  def <- load_ascvd_codes(.codes)
+  m <- function(code, vocab) any(startsWith(code, def$codes$code_prefix[def$codes$vocabulary_id == vocab]))
+  for (x in c("I73.00", "I73.01", "I73.1", "I73.81")) expect_false(m(x, "ICD10CM"), info = x)
+  for (x in c("443.0", "443.1", "443.82", "443.21")) expect_false(m(x, "ICD9CM"), info = x)
+  expect_true(m("I73.9", "ICD10CM")); expect_true(m("I73.89", "ICD10CM"))
+  expect_true(m("443.9", "ICD9CM"));  expect_true(m("443.81", "ICD9CM"))
 })
 
 test_that("ICD9CM and ICD9Proc are now in the outcome, mirroring ICD-10 class for class (2026-11-08)", {

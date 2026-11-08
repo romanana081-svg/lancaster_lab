@@ -42,8 +42,10 @@
 #      prefixes that mirror the ICD-10/CPT entries one for one, and a SNOMED block matched through
 #      the hierarchy on the standard column. `audit_ascvd_codes()` Layer 2 lists what each captures;
 #      Layer 3 now sizes the ICD-9 ASCVD-shaped codes that are STILL unmatched (e.g. 436).
-#   2. The CPT prefix "929" is BROADER than its own comment claims ("92920-92944: PCI"): it also
-#      matches 92950 CPR, 92953 pacing, 92960 cardioversion, 92986+ valvuloplasty. `audit_ascvd_codes()`
+#   2. RESOLVED 2026-11-08: the CPT prefix "929" was BROADER than its comment claimed ("92920-92944:
+#      PCI"); the Workbench audit found elective cardioversion (92960) was its most common code. It is
+#      now an explicit PCI list, and CABG covers 33510-33536 (it was single-graft codes only).
+#      Historical note -- it matched 92950 CPR, 92953 pacing, 92960 cardioversion, 92986+ valvuloplasty. `audit_ascvd_codes()`
 #      reports every distinct code the definition actually captures, with counts, so the list can be
 #      pruned against evidence instead of from memory (the NEEDS_A_CODE_LIST discipline).
 
