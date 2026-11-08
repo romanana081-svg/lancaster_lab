@@ -307,7 +307,9 @@ make_prevent_calibration_figures <- function(res, outdir = "figures", horizon_ye
                            name = "PREVENT 10-yr risk\ngroup (range)") +
         labs(title = "Observed ASCVD by predicted-risk group",
              subtitle = paste0("Kaplan-Meier cumulative incidence\n", lab_outcome),
-             x = "Years since landmark", y = "Cumulative incidence",
+             x = if (!is.data.frame(res) && isTRUE(res$frame$per_person))
+                   "Years since own panel date" else "Years since landmark",
+             y = "Cumulative incidence",
              caption = paste("Curves should separate in order — that IS discrimination, shown as a",
                              "survival curve.\nSeparation here is the same information the",
                              "calibration plot collapses into one time point.")) +

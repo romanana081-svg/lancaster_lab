@@ -157,7 +157,7 @@ case_cohort_report <- function(con, washout_days = 30, ratio = 10, seed = 202607
   say("  - statin / bp_tx / dm are EVER flags, not as-of-anchor. For a case these can reflect")
   say("    treatment started after the event. Anchoring them is the next fix.")
   say("  - smoking answer coding is PROVISIONAL; bp_tx is PROVISIONAL_AHA_CLASSES.")
-  say("  - outcome is ICD10CM-only, so pre-2015 (ICD9) events are invisible; CPT '929' over-captures")
+  say("  - outcome = ICD-10 + ICD-9 + SNOMED (2026-11-08); CPT '929' still over-captures")
   say("    (92950 CPR, 92960 cardioversion). Both measured by workbench_report() Layers 2-3.")
   say("  - chronic_disease codes date a DIAGNOSIS, not an onset -- partly a measure of care contact.")
   say("")

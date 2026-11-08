@@ -89,12 +89,23 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
 
   # --- study parameters -----------------------------------------------------------------------
   add("\n[1] STUDY PARAMETERS")
-  add("  design                : landmark cohort (shared baseline; NOT the case-anchored D-019 design)")
-  add("  landmark (T0)         : %s", format(res$landmark %||% fr$landmark))
-  add("  end of follow-up      : %s", format(res$end_of_followup %||% fr$end_of_followup))
-  add("  follow-up window      : %.2f years",
-      as.numeric((res$end_of_followup %||% fr$end_of_followup) -
-                 (res$landmark %||% fr$landmark)) / 365.25)
+  if (isTRUE(fr$per_person)) {
+    # Per-person baseline (2026-11-07): there is no single T0 or window to print, so print the rule
+    # and the follow-up distribution instead.
+    add("  design                : per-person baseline at each participant's own first complete panel")
+    add("                          (NOT the case-anchored D-019 design; no minimum follow-up)")
+    add("  baseline (T0)         : %s", fr$baseline_rule)
+    add("  end of follow-up      : %s", format(res$end_of_followup %||% fr$end_of_followup))
+    add("  follow-up             : %s",
+        if (exists("describe_followup", mode = "function")) describe_followup(fr) else "see readout")
+  } else {
+    add("  design                : landmark cohort (shared baseline; NOT the case-anchored D-019 design)")
+    add("  landmark (T0)         : %s", format(res$landmark %||% fr$landmark))
+    add("  end of follow-up      : %s", format(res$end_of_followup %||% fr$end_of_followup))
+    add("  follow-up window      : %.2f years",
+        as.numeric((res$end_of_followup %||% fr$end_of_followup) -
+                   (res$landmark %||% fr$landmark)) / 365.25)
+  }
   add("  panel-to-event rule   : %s days (D-017)", fr$min_days_panel_to_event %||% NA)
   add("  smoking               : %s", fr$smoking_source %||% "unknown")
   add("  outcome (primary)     : all ASCVD -- chronic dx OR acute event OR revascularisation (D-016)")
@@ -144,7 +155,8 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
   # baseline. Left as-is (it is what survival returns) but labelled, because a reader who assumes
   # cumulative will read the last row as a drop in events.
   add("  n_event = events in the interval since the previous row, NOT cumulative.")
-  add("  cuminc %% IS cumulative from the landmark.")
+  add("  cuminc %% IS cumulative from %s.",
+      if (isTRUE(fr$per_person)) "each participant's own panel date" else "the landmark")
   emit_km(res$km,       "all ASCVD (D-016 primary)")
   emit_km(res$km_acute, "acute only (comparable to the paper)")
   if (!is.null(res$km_by_sex)) {
@@ -209,8 +221,8 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
   # --- the caveats -------------------------------------------------------------------------------
   add("\n[7] WHAT LIMITS THESE NUMBERS (all four apply to every row above)")
   add("  1. Death not modelled. Competing risk treated as censoring -> incidence OVERSTATED.")
-  add("  2. ICD10CM only. Pre-~Oct-2015 events invisible -> prevalent cases leak in as incident,")
-  add("     and early follow-up is left-truncated.")
+  add("  2. Outcome = ICD-10 + ICD-9 + SNOMED + CPT/ICD-9 procedures (2026-11-08). Prevalence is only")
+  add("     as complete as each person's EHR history before their baseline.")
   add("  3. Censored at the CDR cutoff, not last contact -> person-time inflated, rate pushed DOWN.")
   add("  4. bp_tx is PROVISIONAL ('on a BP-lowering drug', not 'treated for hypertension');")
   add("     smoking answer coding is PROVISIONAL. Both feed predicted risk.")

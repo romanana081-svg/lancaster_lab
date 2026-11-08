@@ -37,9 +37,11 @@
 # BigQuery in the Workbench (D-003).
 #
 # TWO KNOWN LIMITATIONS, BOTH MEASURED RATHER THAN GUESSED (see check_ascvd_events.R):
-#   1. ICD9CM. The config lists ICD10CM prefixes. All of Us EHR records before ~Oct-2015 are coded
-#      ICD9CM, so pre-2015 events are MISSED unless ICD9 prefixes are added. `audit_ascvd_codes()`
-#      counts how many rows that is, so the gap is sized before anyone decides to accept it.
+#   1. ICD9CM — RESOLVED 2026-11-08. The config used to list ICD10CM prefixes only, so records before
+#      ~Oct-2015 (coded ICD9CM) were MISSED. It now carries ICD9CM diagnosis and ICD9Proc procedure
+#      prefixes that mirror the ICD-10/CPT entries one for one, and a SNOMED block matched through
+#      the hierarchy on the standard column. `audit_ascvd_codes()` Layer 2 lists what each captures;
+#      Layer 3 now sizes the ICD-9 ASCVD-shaped codes that are STILL unmatched (e.g. 436).
 #   2. The CPT prefix "929" is BROADER than its own comment claims ("92920-92944: PCI"): it also
 #      matches 92950 CPR, 92953 pacing, 92960 cardioversion, 92986+ valvuloplasty. `audit_ascvd_codes()`
 #      reports every distinct code the definition actually captures, with counts, so the list can be
@@ -100,7 +102,78 @@ load_ascvd_codes <- function(path = .ASCVD_CODES_DEFAULT) {
                         "  The outcome definition contradicts itself; fix the config."),
                  paste(clash, collapse = ", ")), call. = FALSE)
 
-  list(codes = codes, excluded = excluded)
+  # SNOMED (2026-11-08). Hierarchy-matched, so its own frame: ORDER = priority, exactly as for the
+  # prefixes. `priority` is carried explicitly because SQL has no notion of row order.
+  .snomed_frame <- function(block, need_class) {
+    if (!length(block)) return(data.frame(concept_code = character(0), class = character(0),
+                                          name = character(0), priority = integer(0)))
+    out <- do.call(rbind, lapply(block, function(e) {
+      if (is.null(e$concept_code) || (need_class && is.null(e$class)))
+        stop("load_ascvd_codes(): every snomed entry needs `concept_code`",
+             if (need_class) " and `class`" else "", ".", call. = FALSE)
+      data.frame(concept_code = as.character(e$concept_code),
+                 class = as.character(e$class %||% NA_character_),
+                 name  = as.character(e$name %||% NA_character_), stringsAsFactors = FALSE)
+    }))
+    out$priority <- seq_len(nrow(out))
+    out
+  }
+  snomed          <- .snomed_frame(y$snomed, TRUE)
+  snomed_excluded <- .snomed_frame(y$snomed_excluded, FALSE)
+  bad <- setdiff(snomed$class, c("acute_event", "chronic_disease", "revascularisation"))
+  if (length(bad))
+    stop(sprintf("load_ascvd_codes(): unknown snomed class(es): %s", paste(bad, collapse = ", ")),
+         call. = FALSE)
+  clash <- intersect(snomed$concept_code, snomed_excluded$concept_code)
+  if (length(clash))
+    stop(sprintf("load_ascvd_codes(): SNOMED %s is in BOTH `snomed` and `snomed_excluded`.",
+                 paste(clash, collapse = ", ")), call. = FALSE)
+
+  list(codes = codes, excluded = excluded, snomed = snomed, snomed_excluded = snomed_excluded)
+}
+
+#' The SNOMED concept -> ascvd_class map, as a SQL derived table (concept_id, ascvd_class).
+#'
+#' Every STANDARD SNOMED concept that descends (concept_ancestor, so including the concept itself)
+#' from a listed `snomed:` code, minus every descendant of a `snomed_excluded:` code. A concept under
+#' several listed codes gets the class of the highest-priority (first-listed) one -- MIN(priority) --
+#' which is first-match-wins, the same rule as the ICD prefixes.
+#'
+#' Computed at the CONCEPT level (a few thousand rows), never per occurrence, so the join against
+#' condition_occurrence stays a plain equi-join at CDR scale. A derived table, not a CTE, so it can
+#' sit inside one arm of the UNION in extract_ascvd_events() on both DuckDB and BigQuery.
+.snomed_map_sql <- function(snomed, snomed_excluded) {
+  if (!nrow(snomed)) return(NULL)
+  q <- function(x) paste(sprintf("'%s'", x), collapse = ", ")
+  prio <- paste(sprintf("WHEN '%s' THEN %d", snomed$concept_code, snomed$priority), collapse = " ")
+  cls  <- paste(sprintf("WHEN %d THEN '%s'", snomed$priority, snomed$class), collapse = " ")
+  excl <- if (!nrow(snomed_excluded)) "" else sprintf("
+        AND ca.descendant_concept_id NOT IN (
+          SELECT xa.descendant_concept_id
+          FROM concept_ancestor xa JOIN concept xc ON xc.concept_id = xa.ancestor_concept_id
+          WHERE xc.vocabulary_id = 'SNOMED' AND xc.concept_code IN (%s))",
+    q(snomed_excluded$concept_code))
+  sprintf("(
+      SELECT concept_id, CASE prio %s END AS ascvd_class
+      FROM (
+        SELECT ca.descendant_concept_id AS concept_id,
+               MIN(CASE a.concept_code %s END) AS prio
+        FROM concept_ancestor ca
+        JOIN concept a ON a.concept_id = ca.ancestor_concept_id
+        WHERE a.vocabulary_id = 'SNOMED' AND a.concept_code IN (%s)%s
+        GROUP BY ca.descendant_concept_id
+      ) pr
+    )", cls, prio, q(snomed$concept_code), excl)
+}
+
+#' Which `snomed:` codes do NOT resolve to a SNOMED concept in this CDR. A code that resolves to
+#' nothing contributes nothing, silently -- the failure mode this whole file is organised against.
+.snomed_unresolved <- function(con, snomed) {
+  if (!nrow(snomed)) return(character(0))
+  got <- DBI::dbGetQuery(con, sprintf(
+    "SELECT DISTINCT concept_code FROM concept WHERE vocabulary_id = 'SNOMED' AND concept_code IN (%s)",
+    paste(sprintf("'%s'", snomed$concept_code), collapse = ", ")))$concept_code
+  setdiff(snomed$concept_code, as.character(got))
 }
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -113,15 +186,21 @@ load_ascvd_codes <- function(path = .ASCVD_CODES_DEFAULT) {
 #'
 #' @param codes  the `codes` frame from load_ascvd_codes(), already filtered to one vocabulary.
 #' @param col    the SQL expression holding the concept code.
-.ascvd_class_case_sql <- function(codes, col = "c.concept_code") {
+#' @param vocab_col  the SQL expression holding the vocabulary_id. Every prefix is matched ONLY within
+#'   its own vocabulary (2026-11-08). With ICD10CM alone this did not matter -- no other vocabulary's
+#'   codes start with "I2" -- but ICD-9 codes are numeric, and so are CPT4 and SNOMED: "410" would
+#'   match CPT or SNOMED codes beginning 410 and class them as acute MI, with no error anywhere.
+.ascvd_class_case_sql <- function(codes, col = "c.concept_code", vocab_col = "c.vocabulary_id") {
   if (nrow(codes) == 0) return("NULL")
-  whens <- sprintf("      WHEN %s LIKE '%s%%' THEN '%s'", col, codes$code_prefix, codes$class)
+  whens <- sprintf("      WHEN %s = '%s' AND %s LIKE '%s%%' THEN '%s'",
+                   vocab_col, codes$vocabulary_id, col, codes$code_prefix, codes$class)
   paste0("CASE\n", paste(whens, collapse = "\n"), "\n    END")
 }
 
-.ascvd_prefix_filter_sql <- function(codes, col = "c.concept_code") {
+.ascvd_prefix_filter_sql <- function(codes, col = "c.concept_code", vocab_col = "c.vocabulary_id") {
   if (nrow(codes) == 0) return("FALSE")
-  paste(sprintf("%s LIKE '%s%%'", col, codes$code_prefix), collapse = " OR ")
+  paste(sprintf("(%s = '%s' AND %s LIKE '%s%%')", vocab_col, codes$vocabulary_id, col,
+                codes$code_prefix), collapse = " OR ")
 }
 
 #' Extract per-person, per-class first ASCVD event dates.
@@ -136,7 +215,11 @@ extract_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT) {
   codes <- def$codes
 
   cond_codes <- codes[codes$vocabulary_id %in% c("ICD10CM", "ICD9CM"), , drop = FALSE]
-  proc_codes <- codes[codes$vocabulary_id %in% c("CPT4", "ICD10PCS"), , drop = FALSE]
+  proc_codes <- codes[codes$vocabulary_id %in% c("CPT4", "ICD10PCS", "ICD9Proc"), , drop = FALSE]
+  other <- setdiff(codes$vocabulary_id, c(cond_codes$vocabulary_id, proc_codes$vocabulary_id))
+  if (length(other))
+    stop(sprintf("extract_ascvd_events(): vocabulary %s is in the config but no query handles it --
+  its codes would be silently ignored.", paste(other, collapse = ", ")), call. = FALSE)
 
   parts <- character(0)
 
@@ -176,6 +259,28 @@ extract_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT) {
       .ascvd_class_case_sql(proc_codes),
       paste(sprintf("'%s'", unique(proc_codes$vocabulary_id)), collapse = ", "),
       .ascvd_prefix_filter_sql(proc_codes)))
+  }
+
+  # SNOMED (2026-11-08): the STANDARD column, matched through the hierarchy. See .snomed_map_sql().
+  # Unresolved codes are a WARNING rather than an error only because the offline fixture seeds ~10
+  # SNOMED concepts; on the real CDR, any name in this warning is a code-list bug to fix.
+  smap <- .snomed_map_sql(def$snomed, def$snomed_excluded)
+  if (!is.null(smap)) {
+    unres <- .snomed_unresolved(con, def$snomed)
+    if (length(unres))
+      warning(sprintf("extract_ascvd_events(): %d SNOMED code(s) resolve to NOTHING here and contribute
+  no events: %s. On the real CDR that is a config error (configs/ascvd_codes.yaml).",
+                      length(unres), paste(unres, collapse = ", ")), call. = FALSE)
+    parts <- c(parts, sprintf("
+    SELECT o.person_id,
+           CAST(o.condition_start_date AS DATE) AS dt,
+           c.concept_code                       AS code,
+           sm.ascvd_class                       AS ascvd_class,
+           'condition_snomed' AS source_table
+    FROM condition_occurrence o
+    JOIN %s sm ON sm.concept_id = o.condition_concept_id
+    JOIN concept c ON c.concept_id = o.condition_concept_id
+    WHERE o.condition_start_date IS NOT NULL", smap))
   }
 
   if (!length(parts))

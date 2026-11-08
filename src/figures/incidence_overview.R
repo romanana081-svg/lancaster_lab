@@ -61,10 +61,23 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #' Assemble everything the incidence figures need, from one connection.
 #'
 #' @param con  open DBI connection.
-#' @param landmark  the baseline date T0, applied to EVERYONE identically. A single calendar landmark
-#'   is the anchor that cannot produce immortal-time bias: entry does not require having survived long
-#'   enough to accumulate anything. It is passed in rather than defaulted so that no figure is ever
-#'   produced without someone choosing it.
+#' @param landmark  NULL (the default since 2026-11-07) for a PER-PERSON baseline: each participant's
+#'   T0 is the date their own first complete PREVENT panel existed (extract_prevent_panel(first_complete
+#'   = TRUE)), and follow-up runs from there to the cutoff -- however long or short that is. There is
+#'   NO minimum follow-up: the old route picked one calendar landmark with >= 2 years left before the
+#'   cutoff, which discarded every panel completed after it and every year of follow-up before it.
+#'   Survival methods already handle unequal follow-up; that is what censoring is.
+#'   Pass a Date to get the OLD shared-landmark cohort instead (T0 = that date for everyone, panel
+#'   as-of that date). Kept, not deleted: it is the design every pre-2026-11-07 number came from.
+#'   Why per-person is still free of immortal-time bias: entry is the day the panel becomes complete,
+#'   and nothing about the outcome is needed to get there -- events before it make the person
+#'   PREVALENT (excluded), never a late entrant who "survived" to be counted.
+#' @param earliest_panel_date  per-person mode only. Panels must be built from measurements on or
+#'   after this date. NOT a follow-up rule. DEFAULT NULL (no floor) since 2026-11-08, when ICD9CM and
+#'   SNOMED were added to the outcome: before that the outcome was ICD10CM-only, a pre-Oct-2015
+#'   baseline could not see earlier ASCVD, and the default was 2016-01-01. Set a date to reproduce
+#'   that cohort, or as a sensitivity analysis: the prevalence check still only sees as far back as a
+#'   person's EHR does, so very early baselines have the least history behind them.
 #' @param end_of_followup  the CDR cutoff. Everyone event-free is censored here.
 #' @param scorable_only  restrict the at-risk set to the complete/scorable PREVENT panel (D-013).
 #' @param attach_smoking_status  attach REAL survey smoking via extract_smoking() instead of leaving
@@ -88,24 +101,40 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #'   they compute. The poster route (03_mice.R) passes TRUE. The two therefore differ in who is at
 #'   risk -- people already dead at risk start are excluded only under TRUE -- and the frame's
 #'   `death_source` says which one you are holding.
-build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only = TRUE,
+build_incidence_frame <- function(con, landmark = NULL, end_of_followup, scorable_only = TRUE,
                                  attach_smoking_status = FALSE,
                                  min_days_panel_to_event = 30,
-                                 attach_death = FALSE) {
+                                 attach_death = FALSE,
+                                 earliest_panel_date = NULL) {
   stopifnot(exists("extract_ascvd_events", mode = "function"),
             exists("extract_prevent_panel", mode = "function"))
-  landmark        <- as.Date(landmark)
+  per_person      <- is.null(landmark) || all(is.na(landmark))
   end_of_followup <- as.Date(end_of_followup)
-  if (landmark >= end_of_followup)
-    stop("build_incidence_frame(): landmark must precede end_of_followup, or nobody has follow-up.",
-         call. = FALSE)
+  if (per_person) {
+    landmark <- as.Date(NA)
+    if (!is.null(earliest_panel_date)) earliest_panel_date <- as.Date(earliest_panel_date)
+  } else {
+    landmark <- as.Date(landmark)
+    earliest_panel_date <- NULL          # meaningless with a shared landmark; do not report it
+    if (landmark >= end_of_followup)
+      stop("build_incidence_frame(): landmark must precede end_of_followup, or nobody has follow-up.",
+           call. = FALSE)
+  }
+  baseline_rule <- if (per_person)
+    sprintf("per-person: each participant's first complete PREVENT panel%s",
+            if (is.null(earliest_panel_date)) "" else
+              sprintf(" (measurements on/after %s)", format(earliest_panel_date)))
+    else sprintf("shared landmark %s", format(landmark))
 
   events <- extract_ascvd_events(con)
-  # as_of = landmark: the panel is the one that could have been in hand on the landmark date. Without
-  # it the extractor takes each person's most-recent-EVER value, which for anyone who had an event and
-  # stayed in care post-dates that event -- so their "baseline" covariates would be measured after the
-  # outcome, and the 30-day rule (D-017) could never be satisfied honestly.
-  panel  <- extract_prevent_panel(con, as_of = landmark)
+  # The panel is the one that could have been in hand on the baseline date -- the shared landmark, or
+  # each person's own completion date. Without that the extractor takes each person's most-recent-EVER
+  # value, which for anyone who had an event and stayed in care post-dates that event -- so their
+  # "baseline" covariates would be measured after the outcome, and the 30-day rule (D-017) could never
+  # be satisfied honestly.
+  panel  <- if (per_person) extract_prevent_panel(con, first_complete = TRUE,
+                                                  earliest = earliest_panel_date)
+            else extract_prevent_panel(con, as_of = landmark)
 
   # Real survey smoking, if asked for. Left OFF by default because it shrinks the cohort by ~61% and
   # that shrink must be a decision, not a surprise -- but leaving it off is NOT the safe option, it
@@ -164,13 +193,36 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
             panel$complete_panel_smoking
           else panel$complete_panel
   cohort <- panel[keep, , drop = FALSE]
+  n_too_late <- 0L
+  if (per_person) {
+    # No panel, no baseline. With scorable_only = TRUE nobody is dropped here; with FALSE (the MICE
+    # route) these are the people with an incomplete panel, whom neither arm uses anyway -- both arms
+    # require complete_panel -- and who would otherwise reach ascvd_status_at() with T0 = NA.
+    cohort <- cohort[!is.na(cohort$panel_date), , drop = FALSE]
+    # A panel completed within the blanking window of the cutoff has NO time at risk, so the person
+    # cannot contribute. Counted, not hidden: it is the only follow-up-based exclusion left, and it is
+    # 30 days, not 2 years.
+    too_late   <- cohort$panel_date + min_days_panel_to_event >= end_of_followup
+    n_too_late <- sum(too_late)
+    cohort     <- cohort[!too_late, , drop = FALSE]
+  }
+  if (!nrow(cohort) && per_person)
+    stop(sprintf("build_incidence_frame(): NOBODY has a complete PREVENT panel with follow-up time
+  (%d people had >= 1 PREVENT measurement%s; %d complete panels came too late, within %d days of
+  the %s cutoff). Check the measurement date range in the CDR, and earliest_panel_date.",
+                 nrow(panel),
+                 if (is.null(earliest_panel_date)) "" else
+                   sprintf(" on/after %s", format(earliest_panel_date)),
+                 n_too_late, min_days_panel_to_event, format(end_of_followup)), call. = FALSE)
   if (!nrow(cohort))
     stop(sprintf("build_incidence_frame(): NOBODY has a complete panel as of the %s landmark
   (%d people had >= 1 PREVENT measurement by then). The landmark is almost certainly too early --
   the panel is built with as_of = landmark, so measurements taken AFTER it do not count, which is
   the point. Move the landmark later, or check the measurement date range in the CDR.",
                  format(landmark), nrow(panel)), call. = FALSE)
-  cohort$baseline_date <- landmark
+  # T0. Per-person: the day the person's own panel became complete, so the 30-day rule (D-017) now
+  # measures from the panel itself, exactly as the advisor worded it.
+  cohort$baseline_date <- if (per_person) cohort$panel_date else landmark
 
   # PRIMARY outcome (D-016): all three classes count as incident ASCVD, with the 30-day rule (D-017).
   at_risk <- ascvd_status_at(cohort, events, anchor_col = "baseline_date",
@@ -224,7 +276,10 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
              if (isTRUE(attach_smoking_status))
                "Scorable panel (complete inputs + smoking answer)"
              else "Scorable panel (complete inputs, sex known)",
-             "Prevalent ASCVD at landmark (excluded)",
+             if (per_person) sprintf("Panel completed < %d days before the cutoff (no time at risk)",
+                                     min_days_panel_to_event),
+             if (per_person) "Prevalent ASCVD at own panel date (excluded)"
+             else "Prevalent ASCVD at landmark (excluded)",
              sprintf("Event within %d days of the panel (excluded, D-017)",
                      min_days_panel_to_event),
              if (isTRUE(attach_death)) "Died on or before risk start (excluded, D-021)",
@@ -232,7 +287,8 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
              "Incident ASCVD, all classes (D-016)",
              "  of which acute events (literature-comparable)",
              if (isTRUE(attach_death)) "Died before any ASCVD event (competing event, D-021)"),
-    n = c(nrow(panel), nrow(cohort),
+    n = c(nrow(panel), nrow(cohort) + n_too_late,
+          if (per_person) n_too_late,
           sum(at_risk$ascvd_status == "prevalent"),
           sum(at_risk$ascvd_status == "excluded_short_interval"),
           if (isTRUE(attach_death)) sum(at_risk$ascvd_status == "excluded_died_before_risk_start"),
@@ -244,6 +300,8 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
 
   list(events = events, cohort = cohort, at_risk = at_risk, at_risk_acute = at_risk_acute,
        acute = acute, counts = counts, landmark = landmark, end_of_followup = end_of_followup,
+       per_person = per_person, baseline_rule = baseline_rule,
+       earliest_panel_date = earliest_panel_date,
        smoking_source = smoking_source, prevent_source = prevent_source,
        min_days_panel_to_event = min_days_panel_to_event,
        death_source = death_source, death_counts = death_counts,
@@ -270,12 +328,19 @@ build_incidence_frame <- function(con, landmark, end_of_followup, scorable_only 
 #' Write the incidence figures as PNGs.
 #'
 #' @return invisibly, the frame list from build_incidence_frame().
-make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_followup,
+make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end_of_followup,
                                   scorable_only = TRUE, attach_smoking_status = FALSE, dpi = 150,
-                                  min_days_panel_to_event = 30) {
+                                  min_days_panel_to_event = 30,
+                                  earliest_panel_date = NULL) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
   fr <- build_incidence_frame(con, landmark, end_of_followup, scorable_only, attach_smoking_status,
-                              min_days_panel_to_event = min_days_panel_to_event)
+                              min_days_panel_to_event = min_days_panel_to_event,
+                              earliest_panel_date = earliest_panel_date)
+  # Every label below names the clock in use: a per-person baseline is not a landmark, and a figure
+  # captioned "years since landmark" under it would describe a design that was not run.
+  x_lab     <- if (isTRUE(fr$per_person)) "Years since own panel date" else "Years since landmark"
+  t0_phrase <- if (isTRUE(fr$per_person)) "each person's own panel date" else
+               sprintf("the %s landmark", format(fr$landmark))
   save <- function(name, p, w = 7, h = 4.5)
     ggsave(file.path(outdir, name), p, width = w, height = h, dpi = dpi, bg = "white")
   fmt <- function(x) format(x, big.mark = ",", trim = TRUE)
@@ -310,7 +375,7 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
         labs(title = "First acute ASCVD event, by calendar year",
              subtitle = "Ascertainment over calendar time — a sharp rise or cliff is usually a data artefact, not epidemiology",
              x = "Year of first acute event", y = "People",
-             caption = "ICD10CM only: records before ~Oct-2015 are coded ICD9CM and are currently NOT matched,\nwhich left-truncates the early years. Sized by audit_ascvd_codes() Layer 3.") +
+             caption = "Codes: ICD-10-CM, ICD-9-CM, SNOMED CT, CPT, ICD-9 procedures. Early years depend on how far\nback each site's EHR goes; unmatched ICD-9 codes are listed by audit_ascvd_codes() Layer 3.") +
         .theme_inc())
 
     # --- 3. age at first acute event --------------------------------------------------------------
@@ -338,12 +403,14 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
       geom_text(aes(label = sprintf(" %s (%.1f%% of panel)", fmt(n), pct)), hjust = 0, size = 3.7) +
       scale_x_continuous(expand = expansion(mult = c(0, 0.32))) +
       labs(title = "From data to events: the incidence analysis set",
-           subtitle = sprintf("Landmark baseline %s · follow-up to %s",
-                              format(fr$landmark), format(fr$end_of_followup)),
+           subtitle = sprintf("Baseline: %s · follow-up to %s",
+                              fr$baseline_rule %||% sprintf("landmark %s", format(fr$landmark)),
+                              format(fr$end_of_followup)),
            x = "People", y = NULL,
-           caption = paste("Prevalent ASCVD at the landmark (any acute, chronic, or revascularisation code",
-                           "on/before it) is EXCLUDED, per D-013.\nA landmark baseline is used because entry",
-                           "does not require surviving long enough to accumulate a panel — no immortal time.")) +
+           caption = paste(sprintf("Prevalent ASCVD at %s (any acute, chronic, or revascularisation code",
+                                   t0_phrase),
+                           "on/before it) is EXCLUDED, per D-013.\nEntry is the baseline date itself, so it",
+                           "does not require surviving long enough to accumulate anything — no immortal time.")) +
       .theme_inc(), w = 8.5, h = 4.2)
 
   # --- 5. observed cumulative incidence after the landmark ---------------------------------------
@@ -356,18 +423,17 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
         geom_step(color = .CLASS_FILL[["acute_event"]], linewidth = 1.1) +
         scale_y_continuous(labels = function(x) paste0(x, "%")) +
         labs(title = "Observed cumulative incidence of ASCVD",
-             subtitle = sprintf("From the %s landmark, among those free of ASCVD at that date",
-                                format(fr$landmark)),
-             x = "Years since landmark", y = "Cumulative incidence",
+             subtitle = sprintf("From %s, among those free of ASCVD at that date", t0_phrase),
+             x = x_lab, y = "Cumulative incidence",
              caption = sprintf(paste("Kaplan-Meier complement. At risk N = %s, events = %s.",
                                      "Censored at %s.\nOUTCOME (D-016): chronic ASCVD diagnosis, acute",
                                      "event, OR revascularisation — all three count. Follow-up starts",
-                                     "%d days\nafter the landmark (D-017), so the panel predates any",
-                                     "event. This figure is ANCHOR-FREE: event dates and the landmark",
-                                     "only.\nCompeting risk of death not yet modelled (no death table",
+                                     "%d days\nafter %s (D-017), so the panel predates any",
+                                     "event. Covariate VALUES do not enter this figure.",
+                                     "\nCompeting risk of death not yet modelled (no death table",
                                      "wired)."),
                                fmt(n_at_risk), fmt(n_ev), format(fr$end_of_followup),
-                               fr$min_days_panel_to_event)) +
+                               fr$min_days_panel_to_event, t0_phrase)) +
         .theme_inc(), w = 7.5, h = 5.1)
 
     # 14b. the same curve under the ACUTE-ONLY outcome, overlaid. This is the pair that has to be on
@@ -386,7 +452,7 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
           scale_y_continuous(labels = function(x) paste0(x, "%")) +
           labs(title = "The outcome definition changes the curve",
                subtitle = "Same at-risk set, same clock — only what counts as an event differs",
-               x = "Years since landmark", y = "Cumulative incidence",
+               x = x_lab, y = "Cumulative incidence",
                caption = sprintf(paste("Events: %s broad vs %s acute-only, on the same at-risk N =",
                                        "%s.\nOnly the acute-only curve can be checked against Khan et",
                                        "al.'s published ~4.2 per 1000 person-years,\nwhich is a",
@@ -407,8 +473,8 @@ make_incidence_figures <- function(con, outdir = "figures", landmark, end_of_fol
             scale_y_continuous(labels = function(x) paste0(x, "%")) +
             labs(title = "Observed cumulative incidence, by sex",
                  subtitle = "PREVENT is sex-specific, so this is the stratification that matters first",
-                 x = "Years since landmark", y = "Cumulative incidence",
-                 caption = "Anchor-free (event dates + landmark only).") +
+                 x = x_lab, y = "Cumulative incidence",
+                 caption = sprintf("Event dates and %s only.", t0_phrase)) +
             .theme_inc(), w = 7.5, h = 4.8)
     }
   }

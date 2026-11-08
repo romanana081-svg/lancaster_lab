@@ -58,7 +58,15 @@ cohort:
   # true. If an extractor quietly takes each person's EARLIEST value (the notebook's habit, A-001),
   # a de-facto anchor creeps in: cases and non-cases end up anchored differently, and every predictor
   # looks stronger than it is WITH NO BUG APPEARING ANYWHERE. Hence `anchor: none`.
-  anchor: none                              # none | first_complete_panel | landmark   (T-019 decides)
+  #
+  # 2026-11-07: the VALIDATION cohort now uses `first_complete_panel` -- each person's baseline is the
+  # date their own PREVENT panel first became complete, followed to the CDR cutoff with NO minimum
+  # follow-up (it replaced one shared landmark chosen to leave >= 2 years). Same anchoring rule for
+  # cases and non-cases, so the A-001 trap above does not apply. Implemented in
+  # extract_prevent_panel(first_complete = TRUE) and build_incidence_frame(landmark = NULL);
+  # `earliest_panel_date` is an optional floor on panel dates, not a follow-up rule. Default NULL since
+  # 2026-11-08 (it was 2016-01-01 while the outcome was ICD10CM-only; ICD-9 + SNOMED now cover earlier).
+  anchor: first_complete_panel              # none | first_complete_panel | landmark
   retain_all_dates: true                    # non-negotiable while anchor: none
 
   # OPEN — Q-A2. Absence of an EHR code is treated as absence of disease (A-006), and that

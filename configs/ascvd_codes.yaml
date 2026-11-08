@@ -4,11 +4,34 @@
 # is an outcome definition nobody can check — and the previous pipeline's definition was a wall of
 # concept IDs with no record of what any of them meant.
 #
-# Matching is by CODE PREFIX against the vocabulary (ICD10CM, CPT4), resolved through
-# `resolve_concepts()`. We match on codes rather than concept IDs because codes are stable and
-# meaningful; concept IDs are neither, and they change between CDR versions.
+# THREE KINDS OF ENTRY (2026-11-08: ICD-9 and SNOMED added, to stop pre-Oct-2015 events being
+# invisible and to catch records whose source code is not ICD at all):
 #
-# FIRST MATCH WINS, so order matters: acute before chronic.
+#   `ascvd:`   CODE PREFIX matched against the SOURCE concept (ICD10CM, ICD9CM, CPT4, ICD9Proc).
+#              The match is VOCABULARY-AWARE: a prefix only matches codes in its own vocabulary_id.
+#              That is load-bearing now that numeric vocabularies coexist -- ICD-9 "410" would
+#              otherwise also match any SNOMED or CPT code that happens to start with 410.
+#              Vocabulary defaults to ICD10CM (CPT4 for revascularisation); ICD-9 entries state it.
+#   `snomed:`  SNOMED CT concept CODES matched against the STANDARD column (condition_concept_id)
+#              THROUGH THE HIERARCHY: every descendant of the listed concept counts (concept_ancestor).
+#              Prefix matching is meaningless for SNOMED codes, so this is a different mechanism.
+#              Rows whose source was ICD are mapped to SNOMED too, so this block mostly RE-captures
+#              them (harmless: only the first date per person/class is kept); what it adds is rows
+#              with a non-ICD source, plus ICD codes outside our prefix list that map into these
+#              concepts. A hierarchy is BROADER than it looks -- the audit (check_ascvd_events.R,
+#              Layer 2) lists every descendant actually captured, and that list must be reviewed.
+#   `snomed_excluded:`  SNOMED concepts whose DESCENDANTS are removed even if they sit under an
+#              included concept (the SNOMED counterpart of `excluded_deliberately`).
+#
+# We match on codes rather than concept IDs because codes are stable and meaningful; concept IDs are
+# neither, and they change between CDR versions.
+#
+# FIRST MATCH WINS, so order matters: acute before chronic. In `snomed:` the same rule applies to a
+# concept that descends from several listed ones -- the FIRST listed ancestor sets its class, which is
+# why "old MI" and "unstable angina" are listed ABOVE "MI" and "acute coronary syndrome".
+#
+# ICD-9 ENTRIES MIRROR THE ICD-10 ONES ONE FOR ONE, so adding them extends the outcome back in time
+# without changing what it means. Each says which ICD-10 entry it stands in for.
 
 ascvd:
   # ------------------------------------------------------------------------------------------------
@@ -51,6 +74,89 @@ ascvd:
     class: chronic_disease
 
   # ------------------------------------------------------------------------------------------------
+  # ICD-9-CM (records before ~Oct-2015). Same classes as the ICD-10 entries they mirror.
+  # ICD9CM concept_codes carry the dot ("410.71"), so sub-code prefixes include it.
+  # ------------------------------------------------------------------------------------------------
+  - code_prefix: "410"     # acute MI (all sites/episodes)                      ~ I21/I22
+    class: acute_event
+    vocabulary: ICD9CM
+    note: "Includes 410.x2 'subsequent episode of care'; harmless here because only the FIRST date is used."
+  - code_prefix: "411.0"   # postmyocardial infarction syndrome                  ~ I24.1
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "411.8"   # other acute/subacute IHD (411.81 occlusion w/o MI)  ~ I24.0/I24.8
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "429.7"   # certain sequelae of MI                              ~ I23
+    class: acute_event
+    vocabulary: ICD9CM
+  # Ischemic stroke = 433/434 with 5th digit 1 ("with cerebral infarction"). 433.x0 / 434.x0 are
+  # occlusion WITHOUT infarction (ICD-10 I65/I66, not in the outcome), so they are NOT listed.
+  - code_prefix: "433.01"  # basilar artery occlusion with infarction             ~ I63
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "433.11"  # carotid
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "433.21"  # vertebral
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "433.31"  # multiple/bilateral precerebral
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "433.81"  # other specified precerebral
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "433.91"  # unspecified precerebral
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "434.01"  # cerebral thrombosis with infarction
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "434.11"  # cerebral embolism with infarction
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "434.91"  # cerebral artery occlusion, unspecified, with infarction
+    class: acute_event
+    vocabulary: ICD9CM
+  - code_prefix: "411.1"   # intermediate coronary syndrome (unstable angina)     ~ I20.0 (chronic here,
+    class: chronic_disease #   because the ICD-10 list classes all of I20 as chronic)
+    vocabulary: ICD9CM
+  - code_prefix: "412"     # old MI                                              ~ I25.2
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "413"     # angina pectoris                                     ~ I20
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "414"     # other chronic IHD (414.0x coronary atherosclerosis)  ~ I25
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "440"     # atherosclerosis                                     ~ I70
+    class: chronic_disease
+    vocabulary: ICD9CM
+  # 443 is split because 443.2x (arterial dissection) maps to ICD-10 I77.7, which is NOT in I73.
+  # 443.0 Raynaud is included ONLY because I73.0 is (I73 is listed whole above). If Raynaud is
+  # dropped from the outcome, drop it from BOTH: I73.0 and 443.0.
+  - code_prefix: "443.0"   # Raynaud syndrome                                    ~ I73.0
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "443.1"   # thromboangiitis obliterans                          ~ I73.1
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "443.8"   # other specified peripheral vascular disease          ~ I73.8
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "443.9"   # peripheral vascular disease, unspecified             ~ I73.9
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "V45.81"  # aortocoronary bypass status                         ~ Z95.1
+    class: chronic_disease
+    vocabulary: ICD9CM
+  - code_prefix: "V45.82"  # PTCA status                                         ~ Z95.5
+    class: chronic_disease
+    vocabulary: ICD9CM
+
+  # ------------------------------------------------------------------------------------------------
   # REVASCULARISATION (CPT) — READ THIS BEFORE USING IT.
   #
   # A revascularisation is a TREATMENT DECISION, not purely a disease event. Two people with the same
@@ -68,6 +174,87 @@ ascvd:
     class: revascularisation
   - code_prefix: "33533"   # CABG, arterial
     class: revascularisation
+  # ICD-9 procedure codes (inpatient procedures before ~Oct-2015 were coded ICD-9-CM volume 3, not
+  # CPT). 36.04 (intracoronary thrombolytic infusion) is deliberately NOT listed: a drug, not a
+  # revascularisation procedure.
+  - code_prefix: "36.01"   # PTCA single vessel, no thrombolytic (pre-2005)
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.02"   # PTCA single vessel with thrombolytic (pre-2005)
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.03"   # open chest coronary artery angioplasty
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.05"   # PTCA multiple vessel (pre-2005)
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.06"   # insertion of non-drug-eluting coronary stent
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.07"   # insertion of drug-eluting coronary stent
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.09"   # other removal of coronary artery obstruction
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "00.66"   # PTCA (2005+)
+    class: revascularisation
+    vocabulary: ICD9Proc
+  - code_prefix: "36.1"    # CABG, all (36.10-36.19)
+    class: revascularisation
+    vocabulary: ICD9Proc
+
+# --------------------------------------------------------------------------------------------------
+# SNOMED CT — matched through the hierarchy on condition_concept_id (see the header). ORDER IS
+# PRIORITY: a concept under several of these takes the class of the first one listed.
+# Every code here MUST resolve (Layer 1 of the audit); every descendant it pulls in is listed in
+# Layer 2 and should be read before the numbers are trusted -- a SNOMED subtree is wider than its name.
+# --------------------------------------------------------------------------------------------------
+snomed:
+  - concept_code: "1755008"
+    name: "Old myocardial infarction"
+    class: chronic_disease
+    note: "Above MI on purpose: SNOMED files old MI under MI, but it is history (ICD-10 I25.2), not an event."
+  - concept_code: "4557003"
+    name: "Preinfarction syndrome (unstable angina)"
+    class: chronic_disease
+    note: "Above ACS on purpose, to match ICD-10 I20.0 being classed chronic. Revisit both together."
+  - concept_code: "22298006"
+    name: "Myocardial infarction"
+    class: acute_event
+  - concept_code: "394659003"
+    name: "Acute coronary syndrome"
+    class: acute_event
+  - concept_code: "432504007"
+    name: "Cerebral infarction"
+    class: acute_event
+  - concept_code: "414545008"
+    name: "Ischemic heart disease"
+    class: chronic_disease
+  - concept_code: "194828000"
+    name: "Angina"
+    class: chronic_disease
+  - concept_code: "38716007"
+    name: "Atherosclerosis"
+    class: chronic_disease
+  - concept_code: "399957001"
+    name: "Peripheral arterial occlusive disease"
+    class: chronic_disease
+
+snomed_excluded:
+  - concept_code: "274100004"
+    name: "Cerebral hemorrhage"
+    reason: "haemorrhagic, not atherosclerotic (I61)"
+  - concept_code: "21454007"
+    name: "Subarachnoid hemorrhage"
+    reason: "haemorrhagic, not atherosclerotic (I60)"
+  - concept_code: "59282003"
+    name: "Pulmonary embolism"
+    reason: "not atherosclerotic (I26)"
+  - concept_code: "84114007"
+    name: "Heart failure"
+    reason: "not hard ASCVD (I50); needs a decision, same as the ICD exclusion"
 
 # Codes that look cardiac but are NOT atherosclerotic. Listed explicitly so that nobody "helpfully"
 # adds them later: they would contaminate the outcome with a different disease process.
@@ -78,6 +265,18 @@ excluded_deliberately:
     reason: "intracerebral haemorrhage -- haemorrhagic, not atherosclerotic"
   - code_prefix: "I26"
     reason: "pulmonary embolism -- thrombotic but not atherosclerotic ASCVD"
+  - code_prefix: "430"
+    reason: "ICD-9 subarachnoid haemorrhage (= I60)"
+  - code_prefix: "431"
+    reason: "ICD-9 intracerebral haemorrhage (= I61)"
+  - code_prefix: "415.1"
+    reason: "ICD-9 pulmonary embolism (= I26)"
+  - code_prefix: "428"
+    reason: "ICD-9 heart failure (= I50)"
+  - code_prefix: "436"
+    reason: "ICD-9 'acute but ill-defined cerebrovascular disease'. Many stroke algorithms count it, but
+             it is not specifically ischaemic and has no clean ICD-10 counterpart in our list. Needs a
+             decision; the audit's Layer 3 sizes it."
   - code_prefix: "I50"
     reason: "heart failure -- in PREVENT's BROADER CVD composite but not in hard ASCVD. Including it
              is a real choice with real consequences for the event count; it needs a decision, not a

@@ -93,7 +93,7 @@ run_check <- function(con = NULL, outfile = NULL, require_smoking = TRUE) {
     "3. ARE THERE EVENTS, AND ARE THEY THE RIGHT KIND?  (event ascertainment section)",
     "   Look for: a non-zero count in each ASCVD class (acute / chronic / revascularisation), and",
     "   a year distribution that does not start abruptly.",
-    "   Failure signature: everything before ~Oct 2015 missing is EXPECTED (ICD10CM only). A single",
+    "   Failure signature: a cliff at ~Oct 2015 means ICD-9 is NOT matching (it should be). A single",
     "   code contributing most of the events is not — that is over-capture, usually a CPT.",
     "",
     "4. DOES THE INCIDENCE RATE LAND NEAR THE LITERATURE?  (incidence section)",

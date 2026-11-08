@@ -155,8 +155,13 @@
 #' the percentage increase, the coverage sentence in BACKGROUND and every side-by-side row divide by
 #' the complete-case count.
 .mice_require_arms <- function(cc_set, mice_set, cc_all, mice_all, landmark) {
+  per_person <- is.null(landmark) || all(is.na(landmark))
   hint <- function(n_at_risk, n_panel, what)
-    if (n_panel == 0)
+    if (n_panel == 0 && per_person)
+      sprintf("no participant has %s (per-person baseline: first complete panel). Check that every
+  input's code list resolves (an unresolved list makes one input NA for everyone, with no error),
+  and that earliest_panel_date is not later than most measurements.", what)
+    else if (n_panel == 0)
       sprintf("no participant has %s as of the %s landmark. The panel is built AS OF the landmark,
   so a landmark earlier than the measurements yields nothing: check choose_landmark()'s output, and
   check that every input's code list resolves (an unresolved list makes one input NA for everyone,
@@ -191,8 +196,14 @@
 #' @param outcome  "acute" (hard ASCVD — the paper's outcome, and the default) or "broad" (D-016).
 #' @param horizon_years  NULL derives it from the 75th percentile of follow-up and uses the SAME
 #'   horizon for both arms, which is what makes them comparable.
-#' @param landmark,end_of_followup  NULL derives them exactly as the main run does. Supply them to
-#'   pin this analysis to a run you already have, so the two agree about who was studied.
+#' @param landmark  NULL (default) = PER-PERSON baseline: each participant is scored on, and followed
+#'   from, the date their own PREVENT panel was first complete, with no minimum follow-up
+#'   (2026-11-07; replaces the shared landmark chosen to leave >= 2 years). A Date reproduces the old
+#'   shared-landmark cohort.
+#' @param end_of_followup  NULL derives it exactly as the main run does. Supply it (and the same
+#'   baseline settings) to pin this analysis to a run you already have.
+#' @param earliest_panel_date  per-person mode: ignore measurements before this date. NULL (default
+#'   since 2026-11-08, when ICD-9 and SNOMED joined the outcome) = no floor. Not a follow-up rule.
 #' @param seed  passed to mice. Quote it in the methods section.
 #' @param attach_death  treat death as a competing event (D-021). TRUE, and FALSE exists only to
 #'   reproduce the pre-2026-09-29 Kaplan-Meier numbers: the report then says Kaplan-Meier, and says
@@ -202,7 +213,8 @@ run_mice_abstract <- function(con = NULL, m = 5, impute_vars = "smoking",
                               outcome = c("acute", "broad"), horizon_years = NULL,
                               landmark = NULL, end_of_followup = NULL,
                               figdir = "figures", repdir = "reports",
-                              seed = 20260901L, copy_to_bucket = TRUE, attach_death = TRUE) {
+                              seed = 20260901L, copy_to_bucket = TRUE, attach_death = TRUE,
+                              earliest_panel_date = NULL) {
   outcome <- match.arg(outcome)
   if (!file.exists("src/figures/survival_curves.R"))
     stop("run_mice_abstract(): working directory is not the repo root.
@@ -233,15 +245,16 @@ run_mice_abstract <- function(con = NULL, m = 5, impute_vars = "smoking",
   # this one frame below, so they share a landmark, a follow-up window and an event definition.
   say("\n=== 1/6 cohort (both arms come from this one build) ===")
   if (is.null(end_of_followup)) end_of_followup <- derive_end_of_followup(con)$end_of_followup
-  if (is.null(landmark))
-    landmark <- choose_landmark(con, end_of_followup, attach_smoking_status = TRUE)$landmark
-  say("  landmark %s -> %s (%.2f years)", format(landmark), format(end_of_followup),
-      as.numeric(end_of_followup - landmark) / 365.25)
-
+  # landmark = NULL (default since 2026-11-07): PER-PERSON baseline at each participant's own first
+  # complete panel, no minimum follow-up -- choose_landmark()'s 2-year rule is no longer applied.
   fr <- build_incidence_frame(con, landmark, end_of_followup,
                               scorable_only = FALSE, attach_smoking_status = TRUE,
-                              min_days_panel_to_event = 30, attach_death = attach_death)
+                              min_days_panel_to_event = 30, attach_death = attach_death,
+                              earliest_panel_date = earliest_panel_date)
+  landmark <- fr$landmark                      # NA under the per-person baseline
   at_risk <- if (outcome == "acute") fr$at_risk_acute else fr$at_risk
+  say("  baseline : %s", fr$baseline_rule)
+  say("  follow-up: %s", describe_followup(fr, at_risk))
   if (!is.null(fr$prevent_source)) say("  PREVENT: %s", fr$prevent_source)
   say("  death  : %s", fr$death_source)
   if (grepl("^NOT SCORED", fr$prevent_source %||% ""))
@@ -357,7 +370,8 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
                        n_panel = c(cc = nrow(cc_all), mice = nrow(mice_all)),
                        n_died_first = c(cc = died_first(cc_all), mice = died_first(mice_all)),
                        death_years = if ("death_date" %in% names(mice_all))
-                                       mice_all$death_date[!is.na(mice_all$death_date)] else NULL)
+                                       mice_all$death_date[!is.na(mice_all$death_date)] else NULL,
+                       baseline_rule = frame$baseline_rule)
 
   if (isTRUE(copy_to_bucket)) .mice_bucket(figdir, repdir, say)
 
@@ -608,7 +622,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
 .mice_write <- function(cc_set, mice_set, cc_c, cc_slope, mi_c, mi_slope, imp,
                         landmark, end_of_followup, horizon_years, outcome, m, impute_vars,
                         seed, repdir, risk_col, n_panel = NULL, n_died_first = NULL,
-                        death_years = NULL) {
+                        death_years = NULL, baseline_rule = NULL) {
   mc     <- .mice_min_cell()
   sexes  <- c("female", "male")
   death_modelled <- .has_competing(mice_set)
@@ -623,7 +637,20 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   cov_den <- if (!is.null(n_panel)) unname(n_panel["mice"]) else nrow(mice_set)
   if (!length(cov_den) || is.na(cov_den) || cov_den == 0) { cov_num <- NA_real_; cov_den <- NA_real_ }
   pct_add <- if (nrow(cc_set) > 0) 100 * n_add / nrow(cc_set) else NA_real_
-  yrs    <- as.numeric(end_of_followup - landmark) / 365.25
+  # Two baseline designs, two ways to say how long people were followed. A shared landmark gives
+  # everyone the same window; a per-person baseline does not, so it reports the MEDIAN of the arm's
+  # follow-up -- quoting "landmark -> cutoff" there would invent a window nobody actually had.
+  per_person <- is.null(landmark) || all(is.na(landmark))
+  fu_mi  <- mice_set$followup_days[!is.na(mice_set$event)] / 365.25
+  yrs    <- if (per_person) stats::median(fu_mi, na.rm = TRUE) else
+            as.numeric(end_of_followup - landmark) / 365.25
+  t0_txt <- if (per_person) "each participant's own panel date" else
+            sprintf("the %s landmark", format(landmark))
+  bl_line <- if (per_person)
+    sprintf("%s -> %s (median %.2f years of follow-up, IQR %.2f-%.2f)",
+            baseline_rule %||% "per-person: first complete PREVENT panel", format(end_of_followup),
+            yrs, stats::quantile(fu_mi, 0.25, na.rm = TRUE), stats::quantile(fu_mi, 0.75, na.rm = TRUE))
+    else sprintf("%s -> %s (%.2f years of follow-up)", format(landmark), format(end_of_followup), yrs)
 
   fmi <- if (!is.null(mi_c)) sprintf("%.2f", max(mi_c$fmi, na.rm = TRUE)) else "-"
   # A median is a summary of the whole arm, not a cell count, so suppression does not apply to it --
@@ -640,8 +667,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
   rep_lines <- c(
     sprintf("MULTIPLE-IMPUTATION VALIDATION OF PREVENT — %s", Sys.Date()),
     sprintf("CDR        : %s", Sys.getenv("WORKSPACE_CDR", "<unset — offline fixture run>")),
-    sprintf("landmark   : %s -> %s (%.2f years of follow-up)",
-            format(landmark), format(end_of_followup), yrs),
+    sprintf("%s: %s", if (per_person) "baseline   " else "landmark   ", bl_line),
     sprintf("outcome    : %s ASCVD | horizon %d year(s) | risk column %s",
             outcome, horizon_years, risk_col),
     sprintf("imputation : %s", .mice_method_phrase(impute_vars, imp$method, m)),
@@ -726,8 +752,7 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     "  implausible imputed value or wild variation across m.",
 
     hdr("5. HOW FOLLOW-UP ENDED — right-censoring and competing events"),
-    sprintf("  Follow-up starts 30 days after the %s landmark and ends at the FIRST of:",
-            format(landmark)),
+    sprintf("  Follow-up starts 30 days after %s and ends at the FIRST of:", t0_txt),
     "    an ASCVD event            — the outcome",
     if (death_modelled)
       "    death                     — a COMPETING event: the person can no longer have the outcome"
@@ -793,7 +818,8 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
       c("  1. DEATH IS NOT MODELLED. Competing risk is treated as censoring, so observed risk — and",
         "     the calibration slope — is biased UPWARD. Re-run with attach_death = TRUE."),
     "  2. THIS IS THE EHR COHORT, not the srWGS cohort (A-017). Say 'participants with EHR data'.",
-    "  3. ICD-10-CM only: events before ~Oct 2015 are invisible, so early years are left-truncated.",
+    "  3. Outcome codes span ICD-9-CM, ICD-10-CM and SNOMED CT (plus CPT / ICD-9 procedures for",
+    "     revascularisation); early years are still limited by how far back each site's EHR goes.",
     "  4. Censoring is at the CDR cutoff, not last contact — person-time is inflated, rates pushed DOWN.",
     "  5. Imputation assumes missing AT RANDOM given the model. If people conceal smoking for reasons",
     "     unrelated to anything measured here, that is MNAR and no imputation fixes it.",
@@ -840,10 +866,19 @@ mice_abstract_from_frame <- function(at_risk, landmark, end_of_followup, m = 5,
     "",
     "METHODS",
     sprintf("  We identified All of Us participants (Controlled Tier) aged 30-79 with electronic health"),
-    sprintf("  record data and a complete PREVENT input panel as of a %s landmark, followed to %s",
-            format(landmark), format(end_of_followup)),
-    sprintf("  (%.1f years). Incident %s ASCVD was ascertained from ICD-10-CM and CPT codes; the",
-            yrs, outcome),
+    if (per_person) c(
+      "  record data and a complete PREVENT input panel. Each participant's baseline was the date their",
+      "  panel first became complete (each input's most recent value on or before that date; age at",
+      sprintf("  that date), and they were followed from it to %s (median %.1f years). Incident %s",
+              format(end_of_followup), yrs, outcome),
+      "  ASCVD was ascertained from ICD-9-CM, ICD-10-CM and SNOMED CT diagnosis codes and CPT and",
+      "  ICD-9 procedure codes; the")
+    else c(
+      sprintf("  record data and a complete PREVENT input panel as of a %s landmark, followed to %s",
+              format(landmark), format(end_of_followup)),
+      sprintf("  (%.1f years). Incident %s ASCVD was ascertained from ICD-9-CM, ICD-10-CM,",
+              yrs, outcome),
+      "  SNOMED CT, CPT and ICD-9 procedure codes; the"),
     "  baseline panel was required to predate any event by at least 30 days. The published PREVENT",
     "  base equations were applied UNCHANGED — no coefficients were refitted. Missing smoking status",
     sprintf("  was handled by %s,", .mice_method_phrase(impute_vars, imp$method, m)),
@@ -996,10 +1031,14 @@ run_mice_abstract_synthetic <- function(n = 5000, m = 5, outdir = "reports/mice_
                   n, sum(d$event), sum(d$has_smoking_answer),
                   100 * mean(d$has_smoking_answer)))
 
-  mice_abstract_from_frame(d, landmark = as.Date("2019-01-01"),
+  # landmark = NA: the per-person baseline (the default design since 2026-11-07), so the report's
+  # per-person wording -- median follow-up, "own panel date" -- is what this smoke test executes.
+  # The synthetic follow-up times already differ per person, which is what that design produces.
+  mice_abstract_from_frame(d, landmark = as.Date(NA),
                            end_of_followup = as.Date("2024-01-01"),
                            m = m, horizon_years = 3, figdir = file.path(outdir, "figures"),
-                           repdir = outdir, seed = seed, copy_to_bucket = FALSE)
+                           repdir = outdir, seed = seed, copy_to_bucket = FALSE,
+                           frame = list(baseline_rule = "per-person: SYNTHETIC first complete panel"))
 }
 
 #' Stage-1 smoke test against the fixture DuckDB. Its SUCCESS is a clean stop, not a report.

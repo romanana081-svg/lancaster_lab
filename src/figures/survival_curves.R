@@ -15,22 +15,27 @@
 # ------------------------------------------------------------------------------------------------
 # WHAT THIS IS AND IS NOT
 #
-# It IS: the anchor-free half of the incidence analysis — curves built from event DATES and a shared
-# landmark. Covariate VALUES never enter, so the unresolved Q-S6 baseline anchor cannot bias them.
+# It IS: the incidence half of the analysis — curves built from event DATES and a baseline date.
+# Since 2026-11-07 that baseline is PER PERSON: the day each participant's own PREVENT panel became
+# complete, followed to the CDR cutoff with no minimum follow-up (it used to be one shared calendar
+# landmark chosen to leave >= 2 years, via choose_landmark(); pass `landmark =` to get that back).
 #
 # It is NOT the case-anchored cohort (D-019, `risk_set_sampling.R`). That design has no shared clock —
 # each case anchors at their own event date minus 30 days — so it answers "does PREVENT rank cases
-# above controls", not "what fraction develop ASCVD by year 4". A survival curve needs a common time
-# origin, which is what the landmark is for. Both are correct; they answer different questions, and
-# putting a KM curve on a case-anchored cohort would be wrong.
+# above controls", not "what fraction develop ASCVD by year 4". A survival curve needs a time origin
+# that is defined WITHOUT looking at the outcome. The per-person panel date is one (everyone gets it
+# the same way, cases or not); an event date minus 30 days is not, because only cases have it. Both
+# designs are correct; they answer different questions, and putting a KM curve on a case-anchored
+# cohort would be wrong.
 #
 # It is PRELIMINARY in three named ways, all printed with the readout so they reach the slide:
 #   1. Death is not wired in — competing risk is treated as censoring, which OVERSTATES incidence.
 #      (Still true of THIS driver. The poster route, src/workbench/03_mice.R, builds its cohort with
 #      attach_death = TRUE and estimates observed risk by Aalen-Johansen — D-021, 2026-09-29. The
 #      curves here are Kaplan-Meier and must keep saying so until km_at() is moved over with them.)
-#   2. ICD10CM only — pre-~Oct-2015 events are invisible, which left-truncates and mis-assigns
-#      prevalence.
+#   2. Outcome codes: ICD-10-CM, ICD-9-CM, SNOMED CT, CPT and ICD-9 procedures since 2026-11-08 (it
+#      was ICD10CM-only, which hid pre-~Oct-2015 events). Early years still depend on how far back
+#      each site's EHR goes; the SNOMED subtree is reviewed in check_ascvd_events() Layer 2.
 #   3. Everyone event-free is censored at the CDR cutoff, not at last contact, which INFLATES
 #      person-time and pushes the rate down.
 # ------------------------------------------------------------------------------------------------
@@ -116,6 +121,10 @@ derive_end_of_followup <- function(con) {
 
 #' Pick a landmark that actually yields a cohort, and say why it was picked.
 #'
+#' NO LONGER ON THE DEFAULT PATH (2026-11-07). The default baseline is now per person (each
+#' participant's own panel date), which needs no landmark and no `min_followup_years`. This function
+#' remains for anyone reproducing the shared-landmark numbers.
+#'
 #' The landmark is a real decision (see the runbook), but a landmark that leaves NOBODY with a
 #' complete panel is not a decision, it is a bug — and it is the exact failure mode of the `as_of`
 #' rule added by D-017: the panel is built as-of the landmark, so a landmark earlier than most
@@ -166,6 +175,23 @@ choose_landmark <- function(con, end_of_followup, candidates = NULL,
                paste(utils::capture.output(print(tried)), collapse = "\n")), call. = FALSE)
 }
 
+#' One line describing follow-up, for readouts and reports, under EITHER baseline design.
+#'
+#' With a shared landmark every person's window is the same, so one number says it. With a per-person
+#' baseline windows differ, so the honest summary is a distribution -- and quoting "landmark ->
+#' cutoff" there would invent a window nobody had. Computed over the at-risk set only (event 0/1).
+#' Median and IQR are summaries of the arm, not cell counts, so small-cell suppression does not apply.
+describe_followup <- function(fr, at_risk = fr$at_risk) {
+  fu <- at_risk$followup_days[!is.na(at_risk$event)] / 365.25
+  if (!length(fu)) return("no one at risk")
+  q <- stats::quantile(fu, c(0.25, 0.5, 0.75), na.rm = TRUE)
+  per_person <- isTRUE(fr$per_person)
+  sprintf("%smedian %.2f y (IQR %.2f-%.2f), %.0f person-years, to %s",
+          if (per_person) "per person from own panel date: "
+          else sprintf("from the %s landmark: ", format(fr$landmark)),
+          q[2], q[1], q[3], sum(fu, na.rm = TRUE), format(fr$end_of_followup))
+}
+
 #' Cumulative incidence at fixed horizons, with a confidence interval — the readout, not the picture.
 #'
 #' A curve is unreadable off a projector at the back of a room. These are the numbers to say out loud,
@@ -199,7 +225,12 @@ km_at <- function(at_risk, times = c(1, 2, 3, 4, 5), group = NULL) {
 #' The whole survival run: connect, choose dates, write figures, print the readout.
 #'
 #' @param con  open DBI connection, or NULL to call connect_cdr().
-#' @param landmark,end_of_followup  NULL to derive them (and report the derivation).
+#' @param end_of_followup  NULL to derive it (and report the derivation).
+#' @param landmark  NULL (default) = PER-PERSON baseline at each participant's own first complete
+#'   panel, no minimum follow-up (2026-11-07). A Date = the old shared-landmark design. To reproduce
+#'   the old DERIVED landmark, call choose_landmark() yourself and pass its $landmark.
+#' @param earliest_panel_date  per-person mode: ignore measurements before this date (NULL = no
+#'   floor, the default since ICD-9/SNOMED were added; see build_incidence_frame()). Not a follow-up rule.
 #' @param outdir  where the PNGs go.
 #' @param copy_to_bucket  gsutil the PNGs to WORKSPACE_BUCKET/figures/ when running in the Workbench.
 #' @param refresh  re-source the pipeline files even if they appear to be loaded already. TRUE by
@@ -216,7 +247,8 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
                                 min_days_panel_to_event = 30,
                                 scorable_only = TRUE,
                                 horizons = c(1, 2, 3, 4, 5),
-                                copy_to_bucket = TRUE, refresh = TRUE) {
+                                copy_to_bucket = TRUE, refresh = TRUE,
+                                earliest_panel_date = NULL) {
   if (isTRUE(refresh) || !exists("make_incidence_figures", mode = "function"))
     source_survival_deps(quiet = TRUE)
   # Fail on a STALE signature with a message that names the cause. Without this the symptom is
@@ -246,27 +278,28 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
     end_of_followup <- as.Date(end_of_followup)
     say("  end_of_followup (supplied): %s", format(end_of_followup))
   }
+  # BASELINE. Default (landmark = NULL, since 2026-11-07): per person, at the date their own PREVENT
+  # panel became complete, followed to the cutoff with no minimum follow-up. choose_landmark() and
+  # its 2-year rule are no longer on the default path; pass a landmark Date to get that design back.
   if (is.null(landmark)) {
-    ch <- choose_landmark(con, end_of_followup, attach_smoking_status = attach_smoking_status)
-    landmark <- ch$landmark
-    say("  landmark candidates tried:")
-    for (i in seq_len(nrow(ch$tried)))
-      say("    %s  panel=%s  complete=%s  follow-up=%.1f y", format(ch$tried$candidate[i]),
-          format(ch$tried$n_panel[i], big.mark = ","),
-          format(ch$tried$n_complete[i], big.mark = ","), ch$tried$years[i])
-    say("  landmark (chosen)         : %s  <- latest date with a usable cohort", format(landmark))
+    say("  baseline                  : PER PERSON — each participant's first complete panel%s",
+        if (is.null(earliest_panel_date)) "" else
+          sprintf(" (measurements on/after %s)", format(as.Date(earliest_panel_date))))
   } else {
     landmark <- as.Date(landmark)
-    say("  landmark (supplied)       : %s", format(landmark))
+    say("  landmark (supplied)       : %s  <- SHARED-landmark design", format(landmark))
+    say("  follow-up window          : %.2f years", as.numeric(end_of_followup - landmark) / 365.25)
   }
-  say("  follow-up window          : %.2f years", as.numeric(end_of_followup - landmark) / 365.25)
 
   say("\n=== 2. building the cohort and writing figures (this is the slow part) ===")
   fr <- make_incidence_figures(con, outdir = outdir, landmark = landmark,
                                end_of_followup = end_of_followup,
                                scorable_only = scorable_only,
                                attach_smoking_status = attach_smoking_status,
-                               min_days_panel_to_event = min_days_panel_to_event)
+                               min_days_panel_to_event = min_days_panel_to_event,
+                               earliest_panel_date = earliest_panel_date)
+  fu_desc <- describe_followup(fr)
+  say("  follow-up                 : %s", fu_desc)
 
   say("\n=== 3. attrition ===")
   print(fr$counts)
@@ -295,11 +328,11 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
     lit <- list()
     lit$acute <- tryCatch(check_incidence_from_status(
              fr$at_risk_acute, outcome = "acute_event",
-             label = sprintf("acute ASCVD, landmark %s", format(landmark))),
+             label = sprintf("acute ASCVD, %s", fr$baseline_rule)),
              error = function(e) { message("  literature check failed: ", conditionMessage(e)); NULL })
     lit$broad <- tryCatch(check_incidence_from_status(
              fr$at_risk, outcome = "broad",
-             label = sprintf("all ASCVD (D-016), landmark %s", format(landmark))),
+             label = sprintf("all ASCVD (D-016), %s", fr$baseline_rule)),
              error = function(e) NULL)
   } else message("  literature_benchmarks.R not sourced — skipping.")
 
@@ -309,8 +342,8 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
   con_out <- file(summary_path, open = "wt")
   writeLines(c(
     sprintf("SURVIVAL READOUT  %s", format(Sys.Date())),
-    sprintf("landmark %s -> end_of_followup %s (%.2f years)", format(landmark),
-            format(end_of_followup), as.numeric(end_of_followup - landmark) / 365.25),
+    sprintf("baseline: %s -> end_of_followup %s", fr$baseline_rule, format(end_of_followup)),
+    sprintf("follow-up: %s", fu_desc),
     sprintf("smoking: %s", fr$smoking_source),
     sprintf("30-day panel-to-event rule (D-017): %d days", min_days_panel_to_event),
     "", "-- attrition --", utils::capture.output(print(fr$counts)),
@@ -319,7 +352,7 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
     if (!is.null(km_sex)) c("", "-- by sex --", utils::capture.output(print(km_sex))),
     "", "-- caveats that belong on the slide --",
     "1. death not wired in: competing risk treated as censoring -> incidence OVERSTATED",
-    "2. ICD10CM only: pre-~Oct-2015 events invisible -> early years left-truncated",
+    "2. outcome = ICD-10 + ICD-9 + SNOMED + CPT/ICD-9 procedures; early years limited by EHR depth",
     "3. censored at the CDR cutoff, not last contact -> person-time inflated, rate pushed DOWN",
     "4. Q-S6 baseline anchor open: figures 14/15/17 are anchor-free; figure 16 is PROVISIONAL"),
     con_out)

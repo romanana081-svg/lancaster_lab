@@ -543,7 +543,10 @@ render_paper_tables <- function(res, cal = NULL, outdir = "reports", events_from
 
   lm_ <- if (is.data.frame(res)) NULL else res$landmark
   eof <- if (is.data.frame(res)) NULL else res$end_of_followup
-  hdr <- if (!is.null(lm_))
+  per_person <- !is.data.frame(res) && isTRUE(res$frame$per_person)
+  hdr <- if (per_person)
+    sprintf("All of Us cohort, %s -> %s", res$frame$baseline_rule, format(eof))
+  else if (!is.null(lm_) && !all(is.na(lm_)))
     sprintf("All of Us landmark cohort, %s -> %s (%.2f y)", format(lm_), format(eof),
             as.numeric(eof - lm_) / 365.25) else "All of Us landmark cohort"
 

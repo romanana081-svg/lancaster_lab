@@ -212,6 +212,74 @@ test_that("as_of restricts to measurements available on that date -- the anchor 
   })
 })
 
+# ------------------------------------------------------------------------------------------------
+# first_complete -- the PER-PERSON baseline (2026-11-07). Each person's T0 is the day their own panel
+# became complete; it replaced a shared landmark that needed >= 2 years of follow-up.
+# ------------------------------------------------------------------------------------------------
+
+test_that("first_complete dates each panel at the day its LAST input FIRST appeared", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    p <- extract_prevent_panel(con, first_complete = TRUE)
+    complete <- p[p$complete_panel, ]
+    skip_if(nrow(complete) == 0, "fixture has no complete panels")
+
+    # Independent recomputation from raw rows, same bounds, same age-30 rule: per input the first
+    # in-range date, then the latest of those five. If the SQL took the most recent instead of the
+    # first, or let one input through early, this disagrees.
+    raw <- DBI::dbGetQuery(con, sprintf("
+      SELECT m.person_id, c.concept_code AS code, MIN(CAST(m.measurement_date AS DATE)) AS first_dt
+      FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
+           JOIN person pp ON pp.person_id = m.person_id
+      WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
+        AND EXTRACT(YEAR FROM CAST(m.measurement_date AS DATE)) - pp.year_of_birth >= 30
+        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
+           OR (c.concept_code = '2085-9'  AND m.value_as_number > 10  AND m.value_as_number < 150)
+           OR (c.concept_code = '8480-6'  AND m.value_as_number > 60  AND m.value_as_number < 250)
+           OR (c.concept_code = '2160-0'  AND m.value_as_number > 0.1 AND m.value_as_number < 20)
+           OR (c.concept_code = '39156-5' AND m.value_as_number > 10  AND m.value_as_number < 80) )
+        AND m.person_id IN (%s)
+      GROUP BY m.person_id, c.concept_code",
+      paste(format(complete$person_id, scientific = FALSE), collapse = ",")))
+    raw$first_dt <- as.Date(raw$first_dt)
+    expected <- tapply(raw$first_dt, raw$person_id, max)
+    got <- complete$panel_date[match(as.numeric(names(expected)), complete$person_id)]
+    expect_equal(as.numeric(got), as.numeric(expected))
+    expect_true(all(grepl("first_complete_panel_per_person", p$placeholder_inputs)))
+  })
+})
+
+test_that("first_complete ages each person ON their panel date, and gates 30-79 on that age", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    p <- extract_prevent_panel(con, first_complete = TRUE)
+    complete <- p[p$complete_panel, ]
+    skip_if(nrow(complete) == 0, "fixture has no complete panels")
+    dob <- DBI::dbGetQuery(con, "SELECT person_id, CAST(birth_datetime AS DATE) AS dob FROM person")
+    dob$dob <- as.Date(dob$dob)
+    d <- dob$dob[match(complete$person_id, dob$person_id)]
+    expect_equal(as.numeric(complete$age), as.numeric(.age_on(d, complete$panel_date)))
+    expect_true(all(complete$age >= 30 & complete$age <= 79))
+  })
+})
+
+test_that(".age_on counts completed years, not calendar-year differences", {
+  expect_equal(.age_on(as.Date("1980-06-15"), as.Date("2020-06-14")), 39)
+  expect_equal(.age_on(as.Date("1980-06-15"), as.Date("2020-06-15")), 40)
+  expect_equal(.age_on(as.Date("1980-06-15"), as.Date(NA)), NA_integer_)
+})
+
+test_that("earliest bounds every per-person baseline, and as_of + first_complete is refused", {
+  skip_if_no_fixture()
+  with_fixture(function(con) {
+    cut <- as.Date("2016-01-01")
+    p <- extract_prevent_panel(con, first_complete = TRUE, earliest = cut)
+    expect_true(all(is.na(p$panel_date) | p$panel_date >= cut))
+    expect_error(extract_prevent_panel(con, as_of = cut, first_complete = TRUE), "not both")
+    expect_error(extract_prevent_panel(con, earliest = cut), "only applies")
+  })
+})
+
 test_that("the A1c threshold in the code matches the one in the reviewable config", {
   # The threshold lives in TWO places: .DM_A1C_THRESHOLD (what runs) and prevent_concepts.yaml
   # (what the advisor reads and reviews). If they drift, the config becomes a document describing a

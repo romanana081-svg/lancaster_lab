@@ -145,54 +145,118 @@ resolve_antihypertensive_ingredients <- function(con, config_path = "configs/pre
 }
 
 
+#' Age in completed years on date `d`, for a date of birth `dob`. Vectorised; NA in, NA out.
+.age_on <- function(dob, d) {
+  y <- as.integer(format(d, "%Y")) - as.integer(format(dob, "%Y"))
+  y - as.integer(format(d, "%m%d") < format(dob, "%m%d"))
+}
+
 #' Extract the per-person PREVENT input panel from a CDR connection.
 #'
 #' @param con an open DBI connection (BigQuery in the Workbench, the DuckDB fixture offline).
 #' @param as_of  optional Date. If given, ONLY measurements on or before this date are considered, so
 #'   the panel is the one a clinician could have had in hand on that day. Required in spirit by the
 #'   30-day rule (D-017): the default most-recent panel can post-date a person's event, and a panel
-#'   measured after the event cannot predate it by 30 days. Pass the landmark here.
+#'   measured after the event cannot predate it by 30 days. Pass the landmark here. This is the
+#'   SHARED-landmark mode; for a per-person baseline use `first_complete` instead.
+#' @param first_complete  PER-PERSON BASELINE (2026-11-07, replaces the shared 2-year landmark as the
+#'   default analysis). Each person's own as-of date is the FIRST date on which all five required
+#'   inputs had been measured -- i.e. the latest of the five per-input first dates -- and each input
+#'   takes its most recent value on or before that date. So every person is scored on the panel they
+#'   had the day it became complete, and their follow-up starts from that day, not from a calendar
+#'   date shared with everyone else. Cannot be combined with `as_of`.
+#'   AGE: in this mode `age` is the exact age ON `panel_date` (from person.birth_datetime), and the
+#'   30-79 gate is applied to THAT age -- not to age_at_cdr, which can be a decade later than the
+#'   panel. Measurements from calendar years in which the person was under 30 are ignored, so the
+#'   baseline is the first panel completed in the age range PREVENT is defined for, rather than an
+#'   under-30 panel that would get the person dropped despite later eligible panels.
+#' @param earliest  optional Date, `first_complete` mode only: measurements before it are ignored, so
+#'   no baseline can predate it. NOT a follow-up requirement. It exists because the outcome is
+#'   ICD10CM-only (extract_ascvd_events.R, limitation 1): a baseline in the ICD-9 era cannot see prior
+#'   ASCVD, so prevalent disease would be scored as event-free and its later ICD-10 codes as INCIDENT.
 #' @return a data.frame, one row per person (age 30-79, has EHR, >=1 PREVENT measurement), with the
 #'   PREVENT input columns plus `person_id`, a `complete_panel` flag, `panel_date`, and
 #'   `placeholder_inputs`. `panel_date` is the date the panel became complete — the LATEST of the
-#'   five required measurement dates — and is NA when the panel is incomplete.
-extract_prevent_panel <- function(con, as_of = NULL) {
+#'   five required measurement dates — and is NA when the panel is incomplete. In `first_complete`
+#'   mode an incomplete person's values are their latest-ever ones (they have no baseline to be "as
+#'   of"); they are returned only so the attrition ladder can count them.
+extract_prevent_panel <- function(con, as_of = NULL, first_complete = FALSE, earliest = NULL) {
   suppressPackageStartupMessages({ library(dplyr); library(tidyr) })
+  if (isTRUE(first_complete) && !is.null(as_of))
+    stop("extract_prevent_panel(): pass `as_of` (shared landmark) OR `first_complete = TRUE`
+  (per-person baseline), not both -- they are two different definitions of baseline.", call. = FALSE)
+  if (!is.null(earliest) && !isTRUE(first_complete))
+    stop("extract_prevent_panel(): `earliest` only applies with first_complete = TRUE.", call. = FALSE)
 
   # --- measurements: bound + reduce to ONE most-recent value per person, IN SQL (CDR-scale) -------
   # The bounding, the most-recent-date pick, and the same-day average all happen in SQL, so only ~one
   # row per person per input comes back -- never the ~62M raw rows. Physiologic bounds (exclusive, to
   # match the earlier in-R cleaning) also absorb the wild unit inconsistency: an in-range value is
   # kept whatever its unit label, an out-of-scale one (cholesterol in mmol/L ~5; creatinine garbage
-  # >20) is dropped. Baseline = most recent (Q-S6 placeholder); same-day ties averaged (D-009).
+  # >20) is dropped. Same-day ties averaged (D-009).
   # `as_of` filters in SQL, before the most-recent pick -- so "most recent" means most recent AS OF
   # that date, not most recent overall. Doing it in R afterwards would be wrong as well as slower: the
   # window function would already have collapsed each person to their latest-ever row.
+  # `first_complete` does the same thing with a DIFFERENT as-of date per person, computed in the
+  # `baseline` CTE -- still all in SQL, so no per-person date table has to be uploaded to BigQuery.
+  # Portable constructs only (EXTRACT, MIN/MAX, LEFT JOIN): it must run on DuckDB and BigQuery alike.
   as_of_clause <- if (is.null(as_of)) "" else
     sprintf("        AND CAST(m.measurement_date AS DATE) <= DATE '%s'\n",
             format(as.Date(as_of), "%Y-%m-%d"))
+  fc <- isTRUE(first_complete)
+  person_join <- if (fc) " JOIN person p ON p.person_id = m.person_id" else ""
+  fc_clause <- if (!fc) "" else paste0(
+    "        AND EXTRACT(YEAR FROM CAST(m.measurement_date AS DATE)) - p.year_of_birth >= 30\n",
+    if (is.null(earliest)) "" else
+      sprintf("        AND CAST(m.measurement_date AS DATE) >= DATE '%s'\n",
+              format(as.Date(earliest), "%Y-%m-%d")))
+  # In first_complete mode, `in_window` keeps each person's rows on or before THEIR baseline; people
+  # with no complete panel (t0 NULL) keep everything. In the other modes it is a pass-through.
+  # (Not named `asof`: that is a reserved word in DuckDB, which is how the fixture found out.)
+  asof_cte <- if (!fc) "
+    in_window AS (SELECT person_id, code, value, dt FROM bounded)," else "
+    req AS (
+      SELECT person_id, dt,
+             CASE code WHEN '2093-3' THEN 'total_c' WHEN '2085-9' THEN 'hdl_c'
+                       WHEN '8480-6' THEN 'sbp'     WHEN '2160-0' THEN 'creatinine'
+                       WHEN '39156-5' THEN 'bmi' END AS input
+      FROM bounded
+    ),
+    firsts AS (
+      SELECT person_id, input, MIN(dt) AS first_dt
+      FROM req WHERE input IS NOT NULL GROUP BY person_id, input
+    ),
+    baseline AS (                -- the day the LAST of the five inputs first appeared
+      SELECT person_id, MAX(first_dt) AS t0
+      FROM firsts GROUP BY person_id HAVING COUNT(*) = 5
+    ),
+    in_window AS (
+      SELECT b.person_id, b.code, b.value, b.dt
+      FROM bounded b LEFT JOIN baseline bl ON bl.person_id = b.person_id
+      WHERE bl.t0 IS NULL OR b.dt <= bl.t0
+    ),"
 
   m_long <- DBI::dbGetQuery(con, sprintf("
     WITH bounded AS (
       SELECT m.person_id, c.concept_code AS code, m.value_as_number AS value,
              CAST(m.measurement_date AS DATE) AS dt
-      FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id
+      FROM measurement m JOIN concept c ON c.concept_id = m.measurement_concept_id%s
       WHERE c.vocabulary_id = 'LOINC' AND m.value_as_number IS NOT NULL
-%s        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
+%s%s        AND ( (c.concept_code = '2093-3'  AND m.value_as_number > 50  AND m.value_as_number < 500)
            OR (c.concept_code = '2085-9'  AND m.value_as_number > 10  AND m.value_as_number < 150)
            OR (c.concept_code = '8480-6'  AND m.value_as_number > 60  AND m.value_as_number < 250)
            OR (c.concept_code = '2160-0'  AND m.value_as_number > 0.1 AND m.value_as_number < 20)
            OR (c.concept_code = '39156-5' AND m.value_as_number > 10  AND m.value_as_number < 80)
            OR (c.concept_code IN ('4548-4','17856-6') AND m.value_as_number > 3 AND m.value_as_number < 20) )
-    ),
+    ),%s
     latest AS (
       SELECT person_id, code, value, dt,
              MAX(dt) OVER (PARTITION BY person_id, code) AS max_dt
-      FROM bounded
+      FROM in_window
     )
     SELECT person_id, code, AVG(value) AS value, MAX(dt) AS dt
     FROM latest WHERE dt = max_dt
-    GROUP BY person_id, code", as_of_clause))
+    GROUP BY person_id, code", person_join, as_of_clause, fc_clause, asof_cte))
   m_long$dt <- as.Date(m_long$dt)
 
   # Both HbA1c LOINC codes map to one `a1c` column; collapse to one value per person BEFORE the pivot
@@ -260,11 +324,20 @@ extract_prevent_panel <- function(con, as_of = NULL) {
      WHERE ca.ancestor_concept_id IN (%s)",
     paste(format(bp_res$ingredient_ids, scientific = FALSE), collapse = ",")))$person_id else numeric(0)
 
-  # --- demographics: age (CDR-computed) + sex, gated to EHR + 30-79 --------------------------------
-  demo <- DBI::dbGetQuery(con, "
+  # --- demographics: age + sex, gated to EHR + 30-79 -----------------------------------------------
+  # Shared-landmark / most-recent modes: age_at_cdr, gated in SQL (unchanged).
+  # first_complete mode: age ON THE PERSON'S OWN panel_date, gated in R below. age_at_cdr would be
+  # wrong here by however many years separate the panel from the CDR -- and PREVENT is steep in age,
+  # so that error would land straight on calibration. Nobody is pre-filtered on age_at_cdr: an
+  # 82-year-old whose panel was completed at 70 is eligible.
+  demo <- if (!fc) DBI::dbGetQuery(con, "
     SELECT person_id, age_at_cdr AS age, sex_at_birth
     FROM cb_search_person
-    WHERE has_ehr_data = 1 AND age_at_cdr BETWEEN 30 AND 79")
+    WHERE has_ehr_data = 1 AND age_at_cdr BETWEEN 30 AND 79") else DBI::dbGetQuery(con, "
+    SELECT c.person_id, c.age_at_cdr AS age_cdr, c.sex_at_birth,
+           CAST(p.birth_datetime AS DATE) AS dob
+    FROM cb_search_person c JOIN person p ON p.person_id = c.person_id
+    WHERE c.has_ehr_data = 1")
   demo$sex <- ifelse(tolower(demo$sex_at_birth) == "female", "female",
               ifelse(tolower(demo$sex_at_birth) == "male",   "male", NA_character_))
   # ADVISOR DECISION (2026-07-21): drop non-male/female sex explicitly -- PREVENT and CKD-EPI 2021 are
@@ -272,8 +345,19 @@ extract_prevent_panel <- function(con, as_of = NULL) {
   demo <- demo[!is.na(demo$sex), ]
 
   # --- assemble: only people with >=1 PREVENT measurement, in the 30-79 EHR cohort, sex known -------
+  if (fc) {
+    demo$dob <- as.Date(demo$dob)
+    m_wide <- m_wide %>% inner_join(demo[, c("person_id", "age_cdr", "dob", "sex")], by = "person_id")
+    # Completed years on panel_date. A person with no complete panel has no baseline to be aged at,
+    # so they fall back to age_at_cdr -- they are only ever counted, never scored.
+    m_wide$age <- ifelse(is.na(m_wide$panel_date), m_wide$age_cdr,
+                         .age_on(m_wide$dob, m_wide$panel_date))
+    m_wide <- m_wide[!is.na(m_wide$age) & m_wide$age >= 30 & m_wide$age <= 79, , drop = FALSE]
+    m_wide$age_cdr <- NULL; m_wide$dob <- NULL
+  } else {
+    m_wide <- m_wide %>% inner_join(demo[, c("person_id", "age", "sex")], by = "person_id")
+  }
   panel <- m_wide %>%
-    inner_join(demo[, c("person_id", "age", "sex")], by = "person_id") %>%
     mutate(
       egfr    = egfr_ckd_epi_2021(creatinine, age, sex),
       # DIABETES (advisor def; threshold revised 2026-07-31): HbA1c >= 6.5% AND >= 1 glucose-lowering med.
@@ -295,7 +379,9 @@ extract_prevent_panel <- function(con, as_of = NULL) {
     bp_res$source,
     if (length(bp_res$unresolved) && bp_res$source == "names")
       sprintf(" [%d name(s) UNRESOLVED]", length(bp_res$unresolved)) else "",
-    if (is.null(as_of)) "most_recent" else sprintf("most_recent_as_of_%s", format(as.Date(as_of))))
+    if (fc) sprintf("first_complete_panel_per_person%s",
+                    if (is.null(earliest)) "" else sprintf("_on_or_after_%s", format(as.Date(earliest))))
+    else if (is.null(as_of)) "most_recent" else sprintf("most_recent_as_of_%s", format(as.Date(as_of))))
 
   panel[, c("person_id", "age", "sex", "sbp", "bp_tx", "total_c", "hdl_c",
             "statin", "dm", "a1c", "smoking", "egfr", "bmi",

@@ -20,7 +20,8 @@
 #   Layer 1  RESOLVE   — does each code prefix in the config match anything in the vocabulary at all?
 #   Layer 2  CAPTURE   — which distinct codes does the definition ACTUALLY pull, with counts? This is
 #                        what settles the CPT "929" over-capture question with evidence.
-#   Layer 3  ICD9 GAP  — how many ASCVD-shaped rows sit in ICD9CM, which the config does not match?
+#   Layer 3  ICD9 GAP  — ASCVD-shaped ICD9CM codes the config STILL does not match (ICD9CM and SNOMED
+#                        were added 2026-11-08; Layer 2 now also lists every SNOMED descendant captured)
 #   Layer 4  EVENTS    — per-class person counts and first-event YEAR distribution.
 #   Layer 5  INVARIANT — internal consistency assertions that must hold whatever the data says.
 #
@@ -65,6 +66,13 @@ audit_ascvd_codes <- function(con, codes_path = .ASCVD_CODES_DEFAULT) {
                n_concepts = as.numeric(DBI::dbGetQuery(con, q)$n_concepts),
                stringsAsFactors = FALSE)
   }))
+  # SNOMED entries resolve by EXACT code (they are hierarchy roots, not prefixes).
+  if (nrow(def$snomed)) {
+    unres <- .snomed_unresolved(con, def$snomed)
+    resolve <- rbind(resolve, data.frame(
+      code_prefix = def$snomed$concept_code, class = def$snomed$class, vocabulary_id = "SNOMED",
+      n_concepts = ifelse(def$snomed$concept_code %in% unres, 0, 1), stringsAsFactors = FALSE))
+  }
   resolve$resolves <- ifelse(resolve$n_concepts > 0, "yes", "*** NO ***")
 
   # ---- Layer 2: what does the definition actually CAPTURE, code by code? -------------------------
@@ -72,7 +80,7 @@ audit_ascvd_codes <- function(con, codes_path = .ASCVD_CODES_DEFAULT) {
   # suppressed. This table is the evidence for pruning the code list (e.g. whether "929" is dragging
   # in CPR and cardioversion alongside PCI).
   cond_codes <- codes[codes$vocabulary_id %in% c("ICD10CM", "ICD9CM"), , drop = FALSE]
-  proc_codes <- codes[codes$vocabulary_id %in% c("CPT4", "ICD10PCS"), , drop = FALSE]
+  proc_codes <- codes[codes$vocabulary_id %in% c("CPT4", "ICD10PCS", "ICD9Proc"), , drop = FALSE]
 
   capture <- list()
   if (nrow(cond_codes)) {
@@ -104,26 +112,59 @@ audit_ascvd_codes <- function(con, codes_path = .ASCVD_CODES_DEFAULT) {
       .ascvd_prefix_filter_sql(proc_codes)))
   }
 
+  # SNOMED: every descendant concept the hierarchy actually pulls in, on the STANDARD column. This is
+  # the list to read before trusting the SNOMED block -- a subtree is wider than its root's name.
+  smap <- .snomed_map_sql(def$snomed, def$snomed_excluded)
+  if (!is.null(smap)) {
+    capture$snomed <- DBI::dbGetQuery(con, sprintf("
+      SELECT c.vocabulary_id, c.concept_code, c.concept_name, sm.ascvd_class,
+             COUNT(*) AS n_rows, COUNT(DISTINCT o.person_id) AS n_people
+      FROM condition_occurrence o
+      JOIN %s sm ON sm.concept_id = o.condition_concept_id
+      JOIN concept c ON c.concept_id = o.condition_concept_id
+      GROUP BY 1, 2, 3, 4
+      ORDER BY n_people DESC, c.concept_code", smap))
+    # What SNOMED adds BEYOND the ICD prefixes: people with a SNOMED-matched row whose ICD source
+    # (if any) the prefix list does not match. The size of the SNOMED contribution, in one number.
+    icd_cond <- codes[codes$vocabulary_id %in% c("ICD10CM", "ICD9CM"), , drop = FALSE]
+    capture_snomed_only <- tryCatch(DBI::dbGetQuery(con, sprintf("
+      SELECT sm.ascvd_class, COUNT(DISTINCT o.person_id) AS n_people
+      FROM condition_occurrence o
+      JOIN %s sm ON sm.concept_id = o.condition_concept_id
+      LEFT JOIN concept s ON s.concept_id = o.condition_source_concept_id
+      WHERE NOT (COALESCE(%s, FALSE))
+      GROUP BY 1", smap, .ascvd_prefix_filter_sql(icd_cond, "s.concept_code", "s.vocabulary_id"))),
+      error = function(e) NULL)
+  } else capture_snomed_only <- NULL
+
   # ---- Layer 3: size the ICD9CM gap ------------------------------------------------------------
   # The config is ICD10CM; All of Us EHR records before ~Oct-2015 are ICD9CM. This counts the
   # ASCVD-shaped ICD9 codes we are currently NOT matching, so the decision to add them (or to accept
   # the left-truncation) is made against a number. ICD9: 410 acute MI, 411 other acute IHD,
   # 412 old MI, 413 angina, 414 chronic IHD, 433/434 cerebral occlusion/infarct, 440 atherosclerosis.
+  # Since 2026-11-08 ICD9CM IS in the config, so this now lists the ASCVD-SHAPED ICD-9 codes that are
+  # STILL NOT matched -- deliberately left out (433.x0 without infarction, 436, 443.2) or overlooked.
+  # 436 is the one that needs a decision; its row count is here.
+  icd9_cond <- codes[codes$vocabulary_id == "ICD9CM", , drop = FALSE]
   icd9 <- tryCatch(
-    DBI::dbGetQuery(con, "
+    DBI::dbGetQuery(con, sprintf("
       SELECT c.concept_code, c.concept_name,
              COUNT(*) AS n_rows, COUNT(DISTINCT o.person_id) AS n_people
       FROM condition_occurrence o
       JOIN concept c ON c.concept_id = o.condition_source_concept_id
       WHERE c.vocabulary_id = 'ICD9CM'
-        AND (c.concept_code LIKE '410%' OR c.concept_code LIKE '411%'
-          OR c.concept_code LIKE '412%' OR c.concept_code LIKE '413%'
-          OR c.concept_code LIKE '414%' OR c.concept_code LIKE '433%'
-          OR c.concept_code LIKE '434%' OR c.concept_code LIKE '440%')
-      GROUP BY 1, 2 ORDER BY n_people DESC"),
+        AND (c.concept_code LIKE '410%%' OR c.concept_code LIKE '411%%'
+          OR c.concept_code LIKE '412%%' OR c.concept_code LIKE '413%%'
+          OR c.concept_code LIKE '414%%' OR c.concept_code LIKE '433%%'
+          OR c.concept_code LIKE '434%%' OR c.concept_code LIKE '436%%'
+          OR c.concept_code LIKE '440%%' OR c.concept_code LIKE '443%%'
+          OR c.concept_code LIKE 'V45.8%%')
+        AND NOT (%s)
+      GROUP BY 1, 2 ORDER BY n_people DESC", .ascvd_prefix_filter_sql(icd9_cond))),
     error = function(e) NULL)
 
-  list(resolve = resolve, capture = capture, icd9 = icd9, excluded = def$excluded)
+  list(resolve = resolve, capture = capture, icd9 = icd9, excluded = def$excluded,
+       snomed_only = capture_snomed_only)
 }
 
 #' The full participant-safe acceptance report. Print this and paste it back.
@@ -154,7 +195,7 @@ check_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT, max_codes
     # `concept` table holds ~208 seeded rows); in the real CDR it is a genuine finding about the
     # code list. Telling those apart is the whole point of running a layered check.
     cat("  If this ran against the FIXTURE: expected -- its vocabulary is ~208 seeded rows, so\n",
-        "  I63 / I70 / I73 / Z95 / CABG are simply not seeded. Not a code-list problem.\n",
+        "  I63 / I70 / I73 / Z95 / CABG / all ICD-9 / most SNOMED are not seeded. Not a code-list problem.\n",
         "  If this ran against the REAL CDR: a real finding. Those codes pull NOTHING, and any\n",
         "  count below is missing them silently. Fix the config before trusting anything.\n", sep = "")
   }
@@ -167,7 +208,7 @@ check_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT, max_codes
     cap <- aud$capture[[src]]
     cat("\n-- ", toupper(src), " (", nrow(cap), " distinct codes captured) --\n", sep = "")
     if (!nrow(cap)) { cat("   NOTHING CAPTURED. If Layer 1 resolved, this is a linkage failure:\n")
-                      cat("   check that the source concept column is the one being joined.\n"); next }
+                      cat("   check the concept column being joined (SOURCE for ICD/CPT, STANDARD for SNOMED).\n"); next }
     show <- head(cap[order(-cap$n_people), , drop = FALSE], max_codes)
     print(data.frame(vocab = show$vocabulary_id, code = show$concept_code,
                      class = show$ascvd_class,
@@ -181,9 +222,16 @@ check_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT, max_codes
   }
 
   # ------------------------------------------------------------------ Layer 3
-  .rule("LAYER 3 — the ICD9CM gap (codes we are NOT matching)")
-  cat("The config is ICD10CM-only. Pre-2015 records are ICD9CM, so these rows are currently\n")
-  cat("invisible to the outcome. This sizes the left-truncation.\n\n")
+  if (!is.null(aud$snomed_only) && nrow(aud$snomed_only)) {
+    cat("\n-- what SNOMED adds BEYOND the ICD prefixes (people with a SNOMED-matched row whose\n")
+    cat("   source code the ICD list does not match; may overlap across classes) --\n")
+    print(data.frame(class = aud$snomed_only$ascvd_class, n_people = .sup(aud$snomed_only$n_people)),
+          row.names = FALSE)
+  }
+
+  .rule("LAYER 3 — ASCVD-shaped ICD-9 codes STILL not matched")
+  cat("ICD9CM is in the config (2026-11-08). These are ICD-9 codes in the ASCVD families that the\n")
+  cat("list leaves out -- on purpose (433.x0/434.x0 no infarction, 436, 443.2) or by oversight.\n\n")
   if (is.null(aud$icd9) || !nrow(aud$icd9)) {
     cat("No ICD9CM ASCVD-shaped rows found (either none exist here, or ICD9 is not on the\n")
     cat("source column in this CDR). Either way: nothing is being silently dropped.\n")
@@ -194,8 +242,7 @@ check_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT, max_codes
     cat("\nDistinct ICD9 ASCVD codes present: ", nrow(aud$icd9),
         " | people with >=1 (upper bound, may overlap ICD10): ",
         .sup(sum(aud$icd9$n_people)), " (sum over codes, so an over-count)\n", sep = "")
-    cat("=> DECISION NEEDED: add ICD9 prefixes to the config, or accept that follow-up effectively\n")
-    cat("   starts ~2015. Do not leave this implicit -- it changes who counts as prevalent.\n")
+    cat("=> Review: anything here that is not a deliberate exclusion is a gap in the code list.\n")
   }
 
   # ------------------------------------------------------------------ Layer 4
@@ -265,7 +312,11 @@ check_ascvd_events <- function(con, codes_path = .ASCVD_CODES_DEFAULT, max_codes
     # Deliberately-excluded codes must NOT appear. This is the check that catches someone "helpfully"
     # widening the definition -- haemorrhagic stroke, PE, heart failure are different diseases.
     if (nrow(aud$excluded) && length(aud$capture)) {
-      allcap <- do.call(rbind, lapply(aud$capture, function(x) x[, "concept_code", drop = FALSE]))
+      # ICD/CPT captures only: the excluded list is ICD prefixes, and a numeric SNOMED code that
+      # starts "428" or "430" is not ICD-9 heart failure or haemorrhage. SNOMED exclusions are
+      # enforced in SQL by snomed_excluded.
+      allcap <- do.call(rbind, lapply(aud$capture[setdiff(names(aud$capture), "snomed")],
+                                      function(x) x[, "concept_code", drop = FALSE]))
       leaked <- aud$excluded$code_prefix[vapply(aud$excluded$code_prefix, function(p)
         any(startsWith(allcap$concept_code, p)), logical(1))]
       add("deliberately-excluded codes absent", length(leaked) == 0,

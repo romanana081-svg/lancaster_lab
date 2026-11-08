@@ -55,11 +55,11 @@
 #'   miscalibration out of a handful of people.
 #' @param copy_to_bucket  gsutil the outputs to WORKSPACE_BUCKET when it is a real bucket.
 #' @param landmark,end_of_followup,scorable_only  passed straight to run_survival_curves(). Leave as
-#'   NULL/TRUE in the Workbench — the landmark is *derived*, and a hand-picked one is a study-design
-#'   choice made by accident. They exist because the fixture is 300 people: offline, no candidate
-#'   landmark clears the 200-complete-panel bar, so the run cannot be smoke-tested at all without
-#'   them. A script that can only be exercised against real data is a script whose first real run is
-#'   also its first test.
+#'   NULL/TRUE in the Workbench — landmark = NULL means the PER-PERSON baseline (each participant's
+#'   own first complete panel, no minimum follow-up; 2026-11-07), and a hand-picked landmark is a
+#'   study-design choice made by accident. They exist because the fixture is 300 people with only 4
+#'   complete panels, so the run cannot be smoke-tested at all without relaxing them. A script that
+#'   can only be exercised against real data is a script whose first real run is also its first test.
 #'   Offline smoke test (fixture-only settings, WRONG in the Workbench — see run_deliverables_fixture):
 #'     run_deliverables(landmark = as.Date("2016-01-01"), scorable_only = FALSE,
 #'                      require_smoking = FALSE, copy_to_bucket = FALSE)
@@ -164,7 +164,8 @@ run_deliverables <- function(con = NULL, figdir = "figures", repdir = "reports",
     "DELIVERABLES MANIFEST",
     sprintf("generated : %s", format(Sys.time(), "%Y-%m-%d %H:%M")),
     sprintf("CDR       : %s", Sys.getenv("WORKSPACE_CDR", "<unset — offline fixture run>")),
-    sprintf("cohort    : landmark %s -> %s", format(res$landmark), format(res$end_of_followup)),
+    sprintf("cohort    : %s -> %s", res$frame$baseline_rule %||% sprintf("landmark %s", format(res$landmark)),
+            format(res$end_of_followup)),
     sprintf("smoking   : %s", if (require_smoking) "REQUIRED (no answer => excluded)"
                               else "NOT required (FALSE for everyone — risk biased DOWN)"),
     "",

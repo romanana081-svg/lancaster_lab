@@ -30,8 +30,15 @@ test_that("load_ascvd_codes() reads the config and preserves its order", {
 
 test_that("load_ascvd_codes() infers the vocabulary from the class", {
   def <- load_ascvd_codes(.codes)
-  expect_true(all(def$codes$vocabulary_id[def$codes$class == "revascularisation"] == "CPT4"))
-  expect_true(all(def$codes$vocabulary_id[def$codes$class == "acute_event"] == "ICD10CM"))
+  expect_true(all(def$codes$vocabulary_id[def$codes$class == "revascularisation"] %in%
+                  c("CPT4", "ICD9Proc")))
+  expect_true(all(def$codes$vocabulary_id[def$codes$class == "acute_event"] %in%
+                  c("ICD10CM", "ICD9CM")))
+  # Inference itself: an entry with no `vocabulary:` is ICD10CM, or CPT4 for revascularisation.
+  tmp <- tempfile(fileext = ".yaml")
+  writeLines(c("ascvd:", "  - code_prefix: \"I21\"", "    class: acute_event",
+               "  - code_prefix: \"33510\"", "    class: revascularisation"), tmp)
+  expect_equal(load_ascvd_codes(tmp)$codes$vocabulary_id, c("ICD10CM", "CPT4"))
 })
 
 test_that("load_ascvd_codes() refuses a config that contradicts itself", {
@@ -276,12 +283,81 @@ test_that("the CPT 929 prefix over-captures beyond its stated 92920-92944 intent
               info = "expected the over-capture to still be present; if this fails the list was narrowed")
 })
 
-test_that("the outcome definition is ICD10CM-only, so ICD9 events are not ascertained", {
+test_that("ICD9CM and ICD9Proc are now in the outcome, mirroring ICD-10 class for class (2026-11-08)", {
   def <- load_ascvd_codes(.codes)
-  # Pins the known left-truncation: All of Us records before ~Oct-2015 are ICD9CM. This is not a bug
-  # to fix silently -- adding ICD9 prefixes changes who is PREVALENT, which changes the cohort. The
-  # decision needs the numbers from audit_ascvd_codes() Layer 3.
-  expect_false("ICD9CM" %in% def$codes$vocabulary_id)
+  # Replaces the old pin that the outcome was ICD10CM-only. ICD-9 entries must use the class the
+  # ICD-10 list uses for the same disease; these spot-checks pin the ones easiest to get wrong.
+  cls <- function(p, v) def$codes$class[def$codes$code_prefix == p & def$codes$vocabulary_id == v]
+  expect_true(all(c("ICD9CM", "ICD9Proc") %in% def$codes$vocabulary_id))
+  expect_equal(cls("410", "ICD9CM"), "acute_event")         # acute MI             ~ I21
+  expect_equal(cls("412", "ICD9CM"), "chronic_disease")     # old MI               ~ I25.2
+  expect_equal(cls("411.1", "ICD9CM"), "chronic_disease")   # unstable angina      ~ I20.0
+  expect_equal(cls("434.91", "ICD9CM"), "acute_event")      # stroke w/ infarction ~ I63
+  expect_equal(cls("36.1", "ICD9Proc"), "revascularisation")
+  # Occlusion WITHOUT infarction (x0) must not be captured, nor haemorrhage / HF / PE.
+  icd9 <- def$codes$code_prefix[def$codes$vocabulary_id == "ICD9CM"]
+  for (x in c("434.90", "433.10", "430", "431", "428.0", "415.19", "436"))
+    expect_false(any(startsWith(x, icd9)), info = x)
+})
+
+test_that("prefix matching is VOCABULARY-AWARE, so ICD-9 '410' cannot match a SNOMED or CPT code", {
+  codes <- data.frame(code_prefix = c("410", "I21"), class = "acute_event",
+                      vocabulary_id = c("ICD9CM", "ICD10CM"), stringsAsFactors = FALSE)
+  expect_match(.ascvd_prefix_filter_sql(codes),
+               "c.vocabulary_id = 'ICD9CM' AND c.concept_code LIKE '410%'", fixed = TRUE)
+  # On a real engine: a SNOMED or CPT code beginning 410 is NOT classed by the ICD-9 prefix.
+  con <- DBI::dbConnect(duckdb::duckdb()); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  got <- DBI::dbGetQuery(con, sprintf("
+    SELECT c.vocabulary_id, %s AS cls
+    FROM (VALUES ('ICD9CM', '410.71'), ('SNOMED', '410429000'), ('CPT4', '41010'))
+         AS c(vocabulary_id, concept_code)", .ascvd_class_case_sql(codes)))
+  expect_equal(got$cls[got$vocabulary_id == "ICD9CM"], "acute_event")
+  expect_true(is.na(got$cls[got$vocabulary_id == "SNOMED"]))
+  expect_true(is.na(got$cls[got$vocabulary_id == "CPT4"]))
+})
+
+test_that("load_ascvd_codes() reads the SNOMED block in priority order", {
+  def <- load_ascvd_codes(.codes)
+  expect_true(nrow(def$snomed) > 0)
+  expect_equal(def$snomed$priority, seq_len(nrow(def$snomed)))
+  # Old MI must outrank MI, or SNOMED would class history as an acute event (I25.2 vs I21).
+  p <- setNames(def$snomed$priority, def$snomed$concept_code)
+  expect_lt(p[["1755008"]], p[["22298006"]])
+  expect_equal(def$snomed$class[def$snomed$concept_code == "1755008"], "chronic_disease")
+  expect_true(all(c("274100004", "84114007") %in% def$snomed_excluded$concept_code))
+})
+
+test_that("the SNOMED map is first-listed-wins and drops excluded subtrees", {
+  # Hand-built hierarchy (concept_ancestor includes self rows, as in OMOP):
+  #   1 OLDMI under 2 MI under 4 IHD;  3 AMI under 2 MI and 4 IHD;  5 BLEED under 4 IHD and 6 XROOT.
+  con <- DBI::dbConnect(duckdb::duckdb()); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  DBI::dbWriteTable(con, "concept", data.frame(
+    concept_id = 1:6, vocabulary_id = "SNOMED",
+    concept_code = c("OLDMI", "MI", "AMI", "IHD", "BLEED", "XROOT")))
+  DBI::dbWriteTable(con, "concept_ancestor", data.frame(
+    ancestor_concept_id   = c(1, 2, 2, 2, 3, 4, 4, 4, 4, 4, 5, 6, 6),
+    descendant_concept_id = c(1, 2, 1, 3, 3, 4, 1, 2, 3, 5, 5, 6, 5)))
+  sn <- data.frame(concept_code = c("OLDMI", "MI", "IHD"),
+                   class = c("chronic_disease", "acute_event", "chronic_disease"),
+                   name = NA, priority = 1:3, stringsAsFactors = FALSE)
+  ex <- data.frame(concept_code = "XROOT", class = NA, name = NA, priority = 1L)
+  m <- DBI::dbGetQuery(con, paste("SELECT * FROM", .snomed_map_sql(sn, ex), "sm"))
+  cls <- setNames(m$ascvd_class, m$concept_id)
+  expect_equal(cls[["1"]], "chronic_disease")   # old MI: also under MI and IHD, but listed first
+  expect_equal(cls[["2"]], "acute_event")
+  expect_equal(cls[["3"]], "acute_event")       # under MI (prio 2) and IHD (prio 3): MI wins
+  expect_equal(cls[["4"]], "chronic_disease")
+  expect_false("5" %in% names(cls))             # under IHD, but inside an excluded subtree
+  expect_equal(.snomed_unresolved(con, sn), character(0))
+  expect_equal(.snomed_unresolved(con, rbind(sn, transform(sn[1, ], concept_code = "NOPE"))), "NOPE")
+})
+
+test_that("extract_ascvd_events() runs on the fixture with ICD-9 + SNOMED in the config", {
+  con <- .fixture(); on.exit(DBI::dbDisconnect(con, shutdown = TRUE))
+  ev <- suppressWarnings(extract_ascvd_events(con, .codes))   # the fixture seeds few SNOMED roots
+  expect_true(nrow(ev) > 0)
+  expect_true(all(ev$ascvd_class %in% c("acute_event", "chronic_disease", "revascularisation")))
+  expect_false(any(duplicated(ev[, c("person_id", "ascvd_class")])))
 })
 
 # ------------------------------------------------------------------------------------------------
