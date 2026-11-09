@@ -172,6 +172,64 @@ apply_competing_death <- function(at_risk, deaths, end_of_followup) {
 has_competing_status <- function(d)
   "competing_status" %in% names(d) && any(!is.na(d$competing_status))
 
+#' Observed cumulative incidence of ASCVD over time: the one estimator behind every curve.
+#'
+#' Figures 14, 15, 17 and 18 and the survival readout all come through here, so a curve and the
+#' number read off it cannot use different estimators. Aalen-Johansen when the frame carries
+#' `competing_status` (D-021), 1 - Kaplan-Meier when it does not, and the `estimator` column says
+#' which, so that the label printed beside a curve is read from the thing that drew it.
+#'
+#' WHY THE STATES ARE READ BY NAME: survfit returns one column per state, and a stratum with no
+#' deaths still has all three because the factor declares them. Indexing by position is how a curve
+#' quietly becomes the curve for death.
+#'
+#' @param d  an at-risk frame; rows outside the at-risk set are ignored.
+#' @param group  optional column name to stratify by.
+#' @param times_days  NULL for every event time (a curve), or specific times (a readout). Times past
+#'   the end of follow-up carry the last estimate forward with n_risk = 0.
+#' @return NULL if nobody is at risk, else data.frame(strata, time_days, n_risk, n_event, cuminc_pct,
+#'   lower_pct, upper_pct, estimator). n_event counts ASCVD events only, and at requested times it is
+#'   the count since the PREVIOUS requested time, as survfit reports it. The interval is NA in a
+#'   stratum with no ASCVD events yet, where the estimate is a real 0% with no variance.
+cumulative_incidence <- function(d, group = NULL, times_days = NULL) {
+  d <- d[!is.na(d$event) & !is.na(d$followup_days) & d$followup_days >= 0, , drop = FALSE]
+  if (!nrow(d)) return(NULL)
+  competing <- has_competing_status(d)
+  if (competing && anyNA(d$competing_status))
+    stop("cumulative_incidence(): `competing_status` is NA for ", sum(is.na(d$competing_status)),
+         " at-risk row(s). Run the whole frame through apply_competing_death().", call. = FALSE)
+  # survfit's Aalen-Johansen code errors when nobody leaves the starting state. With no ASCVD and no
+  # deaths at all the estimate is 0 under either estimator, so the plain fit is used for the arithmetic
+  # and the label still says what the frame asked for.
+  multistate <- competing && any(d$competing_status != 0L)
+  d$.time   <- d$followup_days
+  d$.status <- if (multistate)
+    factor(d$competing_status, levels = 0:2, labels = c("censored", "ascvd", "death")) else d$event
+  fit <- survival::survfit(stats::as.formula(sprintf("survival::Surv(.time, .status) ~ %s",
+                                                     if (is.null(group)) "1" else group)), data = d)
+  s <- if (is.null(times_days)) summary(fit) else summary(fit, times = times_days, extend = TRUE)
+  strata <- if (is.null(s$strata)) rep("all", length(s$time)) else
+            sub("^[^=]*=", "", as.character(s$strata))
+  if (multistate) {
+    states <- fit$states
+    state_col <- function(x) matrix(x, ncol = length(states), dimnames = list(NULL, states))
+    data.frame(strata = strata, time_days = s$time,
+               n_risk     = state_col(s$n.risk)[, 1],
+               n_event    = state_col(s$n.event)[, "ascvd"],
+               cuminc_pct = 100 * state_col(s$pstate)[, "ascvd"],
+               lower_pct  = 100 * state_col(s$lower)[, "ascvd"],
+               upper_pct  = 100 * state_col(s$upper)[, "ascvd"],
+               estimator  = rep("Aalen-Johansen", length(s$time)), stringsAsFactors = FALSE)
+  } else {
+    # survfit's `upper` bounds SURVIVAL, so it becomes the LOWER bound on cumulative incidence.
+    data.frame(strata = strata, time_days = s$time, n_risk = s$n.risk, n_event = s$n.event,
+               cuminc_pct = 100 * (1 - s$surv), lower_pct = 100 * (1 - s$upper),
+               upper_pct = 100 * (1 - s$lower),
+               estimator = rep(if (competing) "Aalen-Johansen" else "Kaplan-Meier", length(s$time)),
+               stringsAsFactors = FALSE)
+  }
+}
+
 #' How each person's follow-up ended, as counts -- the numbers behind the censoring sentence.
 #'
 #' @param d  an at-risk frame (rows outside the at-risk set are ignored).

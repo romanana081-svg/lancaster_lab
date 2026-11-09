@@ -96,10 +96,9 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #'   predate the event by at least this many days. Applied as a symmetric blanking window, so nobody
 #'   is at risk until landmark + this many days. Set 0 to measure what the rule costs.
 #' @param attach_death  end follow-up at death and record it as a COMPETING event
-#'   (apply_competing_death(), extract_death.R; D-021). FALSE by default so the lab-meeting figures
-#'   in this file, which are Kaplan-Meier and captioned "death not modelled", keep describing what
-#'   they compute. The poster route (03_mice.R) passes TRUE. The two therefore differ in who is at
-#'   risk -- people already dead at risk start are excluded only under TRUE -- and the frame's
+#'   (apply_competing_death(), extract_death.R; D-021). Both figure routes pass TRUE:
+#'   make_incidence_figures() by default since 2026-11-08, and 03_mice.R. It changes who is at risk,
+#'   because people already dead at risk start are excluded only under TRUE, and the frame's
 #'   `death_source` says which one you are holding.
 build_incidence_frame <- function(con, landmark = NULL, end_of_followup, scorable_only = TRUE,
                                  attach_smoking_status = FALSE,
@@ -308,22 +307,22 @@ build_incidence_frame <- function(con, landmark = NULL, end_of_followup, scorabl
        death_counts_acute = death_counts_acute, deaths_by_year = deaths_by_year)
 }
 
-#' Observed cumulative incidence after the landmark (Kaplan-Meier complement).
+#' Observed cumulative incidence after the baseline, as a curve (see cumulative_incidence()).
 #'
-#' Anchor-free in the sense that matters: it uses event DATES and the landmark only. Covariate values
+#' Anchor-free in the sense that matters: it uses event DATES and the baseline only. Covariate values
 #' never enter, so the Q-S6 placeholder cannot bias it.
 .cuminc <- function(at_risk, group = NULL) {
-  d <- at_risk[!is.na(at_risk$event) & !is.na(at_risk$followup_days) & at_risk$followup_days >= 0, ]
-  if (!nrow(d)) return(NULL)
-  f <- if (is.null(group)) survival::Surv(d$followup_days, d$event) ~ 1 else
-       stats::as.formula(sprintf("survival::Surv(followup_days, event) ~ %s", group))
-  fit <- survival::survfit(f, data = d)
-  s <- summary(fit)
-  strata <- if (is.null(s$strata)) rep("all", length(s$time)) else
-            sub("^[^=]*=", "", as.character(s$strata))
-  data.frame(years = s$time / 365.25, cuminc = 100 * (1 - s$surv), strata = strata,
-             n_risk = s$n.risk, stringsAsFactors = FALSE)
+  ci <- cumulative_incidence(at_risk, group = group)
+  if (is.null(ci)) return(NULL)
+  data.frame(years = ci$time_days / 365.25, cuminc = ci$cuminc_pct, strata = ci$strata,
+             n_risk = ci$n_risk, estimator = ci$estimator, stringsAsFactors = FALSE)
 }
+
+#' One caption line naming the estimator a curve was drawn with, read from the curve itself.
+.estimator_note <- function(ci)
+  if (identical(ci$estimator[1], "Aalen-Johansen"))
+    "Aalen-Johansen cumulative incidence: death before ASCVD is a competing event." else
+    "1 - Kaplan-Meier: death is treated as censoring, which overstates incidence."
 
 #' Write the incidence figures as PNGs.
 #'
@@ -331,11 +330,12 @@ build_incidence_frame <- function(con, landmark = NULL, end_of_followup, scorabl
 make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end_of_followup,
                                   scorable_only = TRUE, attach_smoking_status = FALSE, dpi = 150,
                                   min_days_panel_to_event = 30,
-                                  earliest_panel_date = NULL) {
+                                  earliest_panel_date = NULL, attach_death = TRUE) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
   fr <- build_incidence_frame(con, landmark, end_of_followup, scorable_only, attach_smoking_status,
                               min_days_panel_to_event = min_days_panel_to_event,
-                              earliest_panel_date = earliest_panel_date)
+                              earliest_panel_date = earliest_panel_date,
+                              attach_death = attach_death)
   # Every label below names the clock in use: a per-person baseline is not a landmark, and a figure
   # captioned "years since landmark" under it would describe a design that was not run.
   x_lab     <- if (isTRUE(fr$per_person)) "Years since own panel date" else "Years since landmark"
@@ -425,15 +425,13 @@ make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end
         labs(title = "Observed cumulative incidence of ASCVD",
              subtitle = sprintf("From %s, among those free of ASCVD at that date", t0_phrase),
              x = x_lab, y = "Cumulative incidence",
-             caption = sprintf(paste("Kaplan-Meier complement. At risk N = %s, events = %s.",
+             caption = sprintf(paste("%s\nAt risk N = %s, events = %s.",
                                      "Censored at %s.\nOUTCOME (D-016): chronic ASCVD diagnosis, acute",
-                                     "event, OR revascularisation — all three count. Follow-up starts",
-                                     "%d days\nafter %s (D-017), so the panel predates any",
-                                     "event. Covariate VALUES do not enter this figure.",
-                                     "\nCompeting risk of death not yet modelled (no death table",
-                                     "wired)."),
-                               fmt(n_at_risk), fmt(n_ev), format(fr$end_of_followup),
-                               fr$min_days_panel_to_event, t0_phrase)) +
+                                     "event, OR revascularisation — all three count.\nFollow-up starts",
+                                     "%d days after %s (D-017), so the panel predates any event.",
+                                     "\nCovariate VALUES do not enter this figure."),
+                               .estimator_note(ci), fmt(n_at_risk), fmt(n_ev),
+                               format(fr$end_of_followup), fr$min_days_panel_to_event, t0_phrase)) +
         .theme_inc(), w = 7.5, h = 5.1)
 
     # 14b. the same curve under the ACUTE-ONLY outcome, overlaid. This is the pair that has to be on
@@ -456,8 +454,8 @@ make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end
                caption = sprintf(paste("Events: %s broad vs %s acute-only, on the same at-risk N =",
                                        "%s.\nOnly the acute-only curve can be checked against Khan et",
                                        "al.'s published ~4.2 per 1000 person-years,\nwhich is a",
-                                       "hard-outcome rate (nonfatal MI, nonfatal stroke, CV death)."),
-                                 fmt(n_ev), fmt(n_ac), fmt(n_at_risk))) +
+                                       "hard-outcome rate (nonfatal MI, nonfatal stroke, CV death).\n%s"),
+                                 fmt(n_ev), fmt(n_ac), fmt(n_at_risk), .estimator_note(ci))) +
           .theme_inc() + theme(legend.position = "top"), w = 7.5, h = 5.1)
     }
 
@@ -474,7 +472,8 @@ make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end
             labs(title = "Observed cumulative incidence, by sex",
                  subtitle = "PREVENT is sex-specific, so this is the stratification that matters first",
                  x = x_lab, y = "Cumulative incidence",
-                 caption = sprintf("Event dates and %s only.", t0_phrase)) +
+                 caption = sprintf("Event dates and %s only.\n%s", t0_phrase,
+                                   .estimator_note(cis))) +
             .theme_inc(), w = 7.5, h = 4.8)
     }
   }
@@ -509,9 +508,7 @@ make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end
                  caption = paste0(.PROVISIONAL,
                    "\nAlso NOT comparable on the vertical axis yet: observed is over actual follow-up",
                    " (< 10 years), predicted is a 10-year risk.",
-                   "\nSmoking: ", fr$smoking_source,
-                   "\nbp_tx: placeholder FALSE for everyone (antihypertensive list NEEDS_A_CODE_LIST)",
-                   " — also biases predicted risk DOWNWARD.")) +
+                   "\nSmoking: ", fr$smoking_source)) +
             .theme_inc(), w = 8, h = 5)
       }
     } else {
@@ -535,7 +532,8 @@ make_incidence_figures <- function(con, outdir = "figures", landmark = NULL, end
 # --- offline entry point: fixture, for layout QA only ---------------------------------------------
 if (sys.nframe() == 0) {
   for (p in c("src/phenotype/R/egfr.R", "src/phenotype/R/extract_prevent.R",
-              "src/phenotype/R/extract_ascvd_events.R", "src/ascvd/prevent/run_prevent.R"))
+              "src/phenotype/R/extract_ascvd_events.R", "src/phenotype/R/extract_death.R",
+              "src/ascvd/prevent/run_prevent.R"))
     if (file.exists(p)) source(p)
   fx <- "fixture/db/aou_fixture.duckdb"
   if (!file.exists(fx)) stop("fixture not built: see docs/environment.md")

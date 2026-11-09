@@ -146,7 +146,8 @@ run_deliverables <- function(con = NULL, figdir = "figures", repdir = "reports",
 
   # -- 4. demographic figures ---------------------------------------------------------------------
   stage("4/5 demographic figures",
-    make_cohort_figures(con, outdir = figdir, require_smoking = require_smoking))
+    make_cohort_figures(con, outdir = figdir, require_smoking = require_smoking,
+                        first_complete = is.null(landmark)))
 
   # -- 5. the PHI-free validation summary ---------------------------------------------------------
   sum_path <- file.path(repdir, sprintf("validation_summary_%s.txt", Sys.Date()))
@@ -190,8 +191,8 @@ run_deliverables <- function(con = NULL, figdir = "figures", repdir = "reports",
     "   genuinely over-predicting model look identical on a calibration plot (DESIGN 6.3).",
     "3. The interval columns are not the same quantity. Ours is a 95% sampling CI in one cohort;",
     "   the paper's is an IQI across 21 cohorts. Never merge them into one '95%' column.",
-    "4. Death is not wired in, so our observed risk — and therefore our calibration slope — is",
-    "   biased UPWARD. This is the largest methodological gap and it belongs on the poster.",
+    "4. Death is a competing event (Aalen-Johansen), but EHR deaths are incomplete and have no cause,",
+    "   so a fatal ASCVD event with no diagnosis code counts as a death. Observed risk is biased DOWN.",
     "5. Check the FIGURES for small cells. The reports are suppressed automatically; a histogram",
     "   bar of three people is a small cell that no suppression rule caught.",
     "6. 'PREVENT is validated in All of Us' is not a supportable sentence from this analysis.")

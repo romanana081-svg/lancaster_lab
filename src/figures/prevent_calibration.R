@@ -121,6 +121,11 @@ rescale_risk_to_horizon <- function(p10, horizon_years) {
 #'   neighbours.
 #' @return list(observed_pct, lower_pct, upper_pct, n_risk, deaths, estimator)
 .observed_risk_at <- function(g, t_days, competing = .has_competing(g)) {
+  # survfit's Aalen-Johansen code errors when nobody leaves the starting state, so a risk group with
+  # no ASCVD and no deaths is answered directly. Its estimate is a real 0% with no variance.
+  if (isTRUE(competing) && all(g$competing_status == 0L))
+    return(list(observed_pct = 0, lower_pct = NA_real_, upper_pct = NA_real_,
+                n_risk = sum(g$followup_days >= t_days), deaths = 0L, estimator = "Aalen-Johansen"))
   if (isTRUE(competing)) {
     # The factor's FIRST level is what survfit reads as censoring. All three levels are declared
     # even when a group has no deaths, so the "ascvd" column always exists to be read by name --
@@ -232,12 +237,12 @@ prevent_concordance <- function(at_risk, by_sex = FALSE) {
   res
 }
 
-#' KM cumulative-incidence curves stratified by predicted-risk group.
+#' Cumulative-incidence curves stratified by predicted-risk group (see cumulative_incidence()).
 #'
 #' The "survival curve" form of the calibration question: do the curves separate, and in the right
 #' order? Separation is discrimination made visible; the paper's calibration plot is the same
 #' information collapsed to one time point.
-.km_by_group <- function(at_risk, n_groups = 5) {
+.cuminc_by_group <- function(at_risk, n_groups = 5) {
   rc <- .find_risk_col(at_risk)
   d  <- at_risk[!is.na(at_risk$event) & !is.na(at_risk[[rc]]) &
                 !is.na(at_risk$followup_days) & at_risk$followup_days >= 0, , drop = FALSE]
@@ -247,12 +252,11 @@ prevent_concordance <- function(at_risk, by_sex = FALSE) {
   d$grp <- cut(d[[rc]], breaks = brk, include.lowest = TRUE, labels = FALSE)
   # Label with the actual risk range, so a reader can see WHAT "group 5" means without a lookup.
   lab <- tapply(d[[rc]], d$grp, function(x) sprintf("%.1f-%.1f%%", min(x), max(x)))
-  fit <- survival::survfit(survival::Surv(followup_days, event) ~ grp, data = d)
-  s   <- summary(fit)
-  g   <- sub("^[^=]*=", "", as.character(s$strata))
-  data.frame(years = s$time / 365.25, cuminc = 100 * (1 - s$surv),
-             group = factor(g, levels = names(lab), labels = sprintf("%s (%s)", names(lab), lab)),
-             stringsAsFactors = FALSE)
+  ci  <- cumulative_incidence(d, group = "grp")
+  data.frame(years = ci$time_days / 365.25, cuminc = ci$cuminc_pct,
+             group = factor(ci$strata, levels = names(lab),
+                            labels = sprintf("%s (%s)", names(lab), lab)),
+             estimator = ci$estimator, stringsAsFactors = FALSE)
 }
 
 #' Write the paper-comparable figures.
@@ -288,7 +292,7 @@ make_prevent_calibration_figures <- function(res, outdir = "figures", horizon_ye
   cal_sex  <- calibration_table(at_risk, horizon_years, n_groups = n_groups, by_sex = TRUE)
   cidx     <- prevent_concordance(at_risk, by_sex = FALSE)
   cidx_sex <- prevent_concordance(at_risk, by_sex = TRUE)
-  km_grp   <- .km_by_group(at_risk, n_groups = n_curve_groups)
+  km_grp   <- .cuminc_by_group(at_risk, n_groups = n_curve_groups)
 
   lab_outcome <- if (outcome == "acute") "acute ASCVD (hard outcome — the paper's outcome)"
                  else "all ASCVD (D-016 broad outcome — NOT the paper's outcome)"
@@ -297,16 +301,16 @@ make_prevent_calibration_figures <- function(res, outdir = "figures", horizon_ye
                                "UNDER-states risk (ASCVD hazard rises with age), so true",
                                "over-prediction is if anything larger than shown."), horizon_years)
 
-  # --- 18. KM curves by predicted-risk group ------------------------------------------------------
+  # --- 18. cumulative-incidence curves by predicted-risk group -------------------------------------
   if (!is.null(km_grp) && nrow(km_grp)) {
-    save("18_km_by_prevent_risk.png",
+    save("18_cuminc_by_prevent_risk.png",
       ggplot(km_grp, aes(years, cuminc, color = group)) +
         geom_step(linewidth = 1.05) +
         scale_y_continuous(labels = function(x) paste0(x, "%")) +
         scale_color_brewer(palette = "RdYlBu", direction = -1,
                            name = "PREVENT 10-yr risk\ngroup (range)") +
         labs(title = "Observed ASCVD by predicted-risk group",
-             subtitle = paste0("Kaplan-Meier cumulative incidence\n", lab_outcome),
+             subtitle = paste0(km_grp$estimator[1], " cumulative incidence\n", lab_outcome),
              x = if (!is.data.frame(res) && isTRUE(res$frame$per_person))
                    "Years since own panel date" else "Years since landmark",
              y = "Cumulative incidence",

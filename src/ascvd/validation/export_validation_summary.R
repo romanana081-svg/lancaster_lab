@@ -150,7 +150,9 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
           if (sup) "-" else sprintf("%.2f - %.2f", k$lower_pct[i], k$upper_pct[i]))
     }
   }
-  add("\n[4] KAPLAN-MEIER CUMULATIVE INCIDENCE")
+  # Read from the results, so the report cannot name one estimator while printing another's numbers.
+  km_est <- if (!is.null(res$km) && "estimator" %in% names(res$km)) res$km$estimator[1] else "Kaplan-Meier"
+  add("\n[4] %s CUMULATIVE INCIDENCE", toupper(km_est))
   # survfit's summary(times=) reports n.event as events since the PREVIOUS requested time, not since
   # baseline. Left as-is (it is what survival returns) but labelled, because a reader who assumes
   # cumulative will read the last row as a drop in events.
@@ -194,13 +196,15 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
   add("  CONSISTENT with the paper, not a contradiction.")
 
   # --- calibration ------------------------------------------------------------------------------
-  add("\n[6] CALIBRATION -- observed (Kaplan-Meier) vs predicted, by group of predicted risk")
+  cal_est <- if (!is.null(cal) && "estimator" %in% names(cal$calibration))
+    cal$calibration$estimator[1] else "Kaplan-Meier"
+  add("\n[6] CALIBRATION -- observed (%s) vs predicted, by group of predicted risk", cal_est)
   if (!is.null(cal) && !is.null(cal$calibration) && nrow(cal$calibration)) {
     add("  horizon %d y | outcome = %s | predicted rescaled 10y -> horizon by 1-(1-p)^(t/10)",
         cal$horizon_years, cal$outcome)
     ct <- cal$calibration
     add("    %-6s %9s %9s %12s %12s %12s %10s", "group", "n", "events", "pred_10yr%",
-        "pred_horiz%", "obs_KM%", "obs/pred")
+        "pred_horiz%", if (cal_est == "Aalen-Johansen") "obs_AJ%" else "obs_KM%", "obs/pred")
     for (i in seq_len(nrow(ct))) {
       sup <- .is_sup(ct$events[i], min_cell) | .is_sup(ct$n[i], min_cell)
       add("    %-6s %9s %9s %12s %12s %12s %10s",
@@ -220,7 +224,9 @@ export_validation_summary <- function(res, cal = NULL, path = NULL, min_cell = .
 
   # --- the caveats -------------------------------------------------------------------------------
   add("\n[7] WHAT LIMITS THESE NUMBERS (all four apply to every row above)")
-  add("  1. Death not modelled. Competing risk treated as censoring -> incidence OVERSTATED.")
+  if (km_est == "Aalen-Johansen")
+    add("  1. Death is a competing event, but EHR deaths are incomplete and have no cause -> incidence biased DOWN.")
+  else add("  1. Death not modelled. Competing risk treated as censoring -> incidence OVERSTATED.")
   add("  2. Outcome = ICD-10 + ICD-9 + SNOMED + CPT/ICD-9 procedures (2026-11-08). Prevalence is only")
   add("     as complete as each person's EHR history before their baseline.")
   add("  3. Censored at the CDR cutoff, not last contact -> person-time inflated, rate pushed DOWN.")

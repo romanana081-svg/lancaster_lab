@@ -15,6 +15,11 @@
 # NOTE the cohort here is the SCORABLE PREVENT panel (complete_panel == TRUE, sex known). Missing
 # smoking is NOT required (that shrink is shown separately). Every figure is captioned with its N so a
 # slide never shows a bar without a denominator.
+#
+# BASELINE (2026-11-08): by default these figures describe each person AT THEIR OWN FIRST COMPLETE
+# PANEL, the same baseline the validation uses. They used to take each person's most recent values and
+# age at the CDR cutoff, which after the per-person change (2026-11-07) would have put a demographics
+# panel on the poster describing different ages, values and people from the cohort it sits beside.
 
 suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 
@@ -43,12 +48,16 @@ suppressPackageStartupMessages({ library(ggplot2); library(dplyr) })
 #'   panel goes 216,167 -> ~84,176. Set FALSE to reproduce the pre-2026-07-30 figures, in which
 #'   smoking was FALSE for everyone and predicted risk was therefore biased DOWNWARD.
 #'   NB the answer CODING is still provisional (prevent_concepts.yaml: ANSWERS_PROVISIONAL).
+#' @param first_complete  TRUE (default) = per-person baseline: inputs and age as of each person's
+#'   first complete panel, matching run_survival_curves() and run_mice_abstract(). FALSE = most recent
+#'   values and age at the CDR cutoff, kept for shared-landmark runs and for the fixture, which has
+#'   only 4 complete panels under the per-person rule.
 #' @return data.frame with person_id, age, sex, race, and (if AHAprevent present) 10-yr ASCVD risk,
 #'   restricted to the scorable panel; plus an attribute "missingness" (per-input NA counts, all rows)
 #'   and an attribute "cohort_note" describing the smoking rule in force.
-build_cohort_frame <- function(con, require_smoking = TRUE) {
+build_cohort_frame <- function(con, require_smoking = TRUE, first_complete = TRUE) {
   stopifnot(exists("extract_prevent_panel", mode = "function"))
-  panel <- extract_prevent_panel(con)
+  panel <- extract_prevent_panel(con, first_complete = first_complete)
 
   # Attach real smoking BEFORE computing missingness, so the missingness figure counts the input we
   # actually require. Leaving smoking out of that figure while requiring it would understate the
@@ -93,10 +102,13 @@ build_cohort_frame <- function(con, require_smoking = TRUE) {
 #' @param outdir directory for the PNGs (created if needed).
 #' @param dpi    resolution (150 is crisp on a slide without huge files).
 #' @return (invisibly) the cohort data.frame.
-make_cohort_figures <- function(con, outdir = "figures", require_smoking = TRUE, dpi = 150) {
+make_cohort_figures <- function(con, outdir = "figures", require_smoking = TRUE, dpi = 150,
+                                first_complete = TRUE) {
   if (!dir.exists(outdir)) dir.create(outdir, recursive = TRUE)
-  df   <- build_cohort_frame(con, require_smoking = require_smoking)
+  df   <- build_cohort_frame(con, require_smoking = require_smoking,
+                             first_complete = first_complete)
   n    <- nrow(df)
+  age_title <- if (isTRUE(first_complete)) "Age at first complete PREVENT panel" else "Age at CDR"
   save <- function(name, p, w = 7, h = 4.5)
     ggsave(file.path(outdir, name), p, width = w, height = h, dpi = dpi, bg = "white")
 
@@ -110,7 +122,7 @@ make_cohort_figures <- function(con, outdir = "figures", require_smoking = TRUE,
     ggplot(df, aes(age)) +
       geom_histogram(binwidth = 2, fill = .ONE_FILL, color = "white") +
       scale_x_continuous(breaks = seq(30, 80, 10)) +
-      labs(title = "Age at CDR", subtitle = "PREVENT is validated for ages 30–79",
+      labs(title = age_title, subtitle = "PREVENT is validated for ages 30–79",
            x = "Age (years)", y = "Participants", caption = cap()) +
       .theme_cohort())
 
@@ -159,10 +171,7 @@ make_cohort_figures <- function(con, outdir = "figures", require_smoking = TRUE,
         labs(title = "10-year ASCVD risk (PREVENT base model)",
              subtitle = sprintf("Median %.1f%%", median(rr$prevent_base_10yr_ASCVD)),
              x = "10-year ASCVD risk (%)", y = "Participants",
-             caption = sprintf(paste("Scored participants. N = %s. %s",
-                                     "\nbp_tx is still placeholder FALSE for everyone",
-                                     "(antihypertensive list NEEDS_A_CODE_LIST), which biases",
-                                     "\npredicted risk DOWNWARD."),
+             caption = sprintf("Scored participants. N = %s. %s",
                                format(nrow(rr), big.mark = ","), attr(df, "cohort_note"))) +
         .theme_cohort())
   }
@@ -198,5 +207,5 @@ if (sys.nframe() == 0) {
   if (!file.exists(fx)) stop("fixture not built: python fixture/build/generate.py")
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = fx, read_only = TRUE)
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
-  make_cohort_figures(con, outdir = "reports/figures_fixture_demo")
+  make_cohort_figures(con, outdir = "reports/figures_fixture_demo", first_complete = FALSE)
 }

@@ -219,6 +219,72 @@ test_that("the interval brackets the estimate and is on the risk scale", {
   expect_gte(aj$lower_pct, 0)
 })
 
+# ---- cumulative_incidence: the estimator behind every curve -------------------------------------
+
+test_that("the curve agrees with the calibration estimator at the same time point", {
+  skip_if_not_installed("survival")
+  d  <- make_cohort()
+  t2 <- 2 * 365.25
+  ci <- cumulative_incidence(d, times_days = t2)
+  aj <- .observed_risk_at(d, t2, competing = TRUE)
+  expect_equal(ci$estimator, "Aalen-Johansen")
+  expect_equal(ci$cuminc_pct, aj$observed_pct, tolerance = 1e-8)
+  expect_equal(ci$lower_pct, aj$lower_pct, tolerance = 1e-8)
+  expect_equal(ci$upper_pct, aj$upper_pct, tolerance = 1e-8)
+})
+
+test_that("with everyone followed to the end, Aalen-Johansen is exactly events / N", {
+  skip_if_not_installed("survival")
+  # Worked out on paper: 10 people, 2 ASCVD, 3 deaths before them, 5 censored after every event.
+  d <- data.frame(event = c(1L, 1L, rep(0L, 8)),
+                  followup_days = c(300, 400, 100, 150, 200, rep(1000, 5)),
+                  competing_status = c(1L, 1L, 2L, 2L, 2L, rep(0L, 5)))
+  ci <- cumulative_incidence(d, times_days = 900)
+  expect_equal(ci$cuminc_pct, 20, tolerance = 1e-8)
+  expect_equal(ci$n_event, 2)          # ASCVD only: reading the death column would give 3
+  expect_equal(ci$n_risk, 5)
+  # 1 - KM on the same people censors the deaths, and over-states: 1 - (6/7)(5/6) = 2/7.
+  d$competing_status <- NULL
+  km <- cumulative_incidence(d, times_days = 900)
+  expect_equal(km$estimator, "Kaplan-Meier")
+  expect_equal(km$cuminc_pct, 100 * 2 / 7, tolerance = 1e-8)
+})
+
+test_that("stratified curves keep each stratum's own ASCVD column, even with no deaths in one", {
+  skip_if_not_installed("survival")
+  d <- make_cohort()
+  d <- d[!(d$sex == "male" & d$competing_status == 2L), ]
+  ci <- cumulative_incidence(d, group = "sex", times_days = 2 * 365.25)
+  expect_equal(sort(ci$strata), c("female", "male"))
+  for (sx in c("female", "male"))
+    expect_equal(ci$cuminc_pct[ci$strata == sx],
+                 .observed_risk_at(d[d$sex == sx, ], 2 * 365.25, competing = TRUE)$observed_pct,
+                 tolerance = 1e-8)
+})
+
+test_that("a group where nothing happened is a labelled 0%, not a crash", {
+  skip_if_not_installed("survival")
+  d <- data.frame(event = 0L, followup_days = c(100, 500, 800, 900), competing_status = 0L,
+                  sex = c("female", "female", "male", "male"))
+  ci <- cumulative_incidence(d, times_days = 300)
+  expect_equal(ci$cuminc_pct, 0)
+  expect_equal(ci$estimator, "Aalen-Johansen")
+  expect_equal(.observed_risk_at(d, 300, competing = TRUE)$observed_pct, 0)
+  # A whole curve with no event times is an empty table, which the figure code skips.
+  expect_equal(nrow(cumulative_incidence(d)), 0L)
+  # One stratum has an event and the other has nothing at all.
+  d2 <- d; d2$event[3] <- 1L; d2$competing_status[3] <- 1L
+  by_sex <- cumulative_incidence(d2, group = "sex", times_days = 850)
+  expect_equal(by_sex$cuminc_pct[by_sex$strata == "female"], 0)
+  expect_equal(by_sex$cuminc_pct[by_sex$strata == "male"], 50)
+})
+
+test_that("a half-attached competing_status is refused by the curves too", {
+  skip_if_not_installed("survival")
+  d <- make_cohort(); d$competing_status[1:5] <- NA
+  expect_error(cumulative_incidence(d), "competing_status")
+})
+
 # ---- calibration_table picks the estimator from the frame, and says which ----------------------
 
 test_that("calibration_table uses Aalen-Johansen when competing_status is present", {

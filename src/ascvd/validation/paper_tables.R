@@ -36,9 +36,9 @@
 #   2. HORIZON. Their slope regresses 10-year observed on 10-year predicted. Ours uses our horizon
 #      for both, after the constant-hazard rescale in prevent_calibration.R.
 #   3. COMPETING RISK. Their observed risk is cause-specific, modelling non-CVD death as a competing
-#      event. Ours is 1 - Kaplan-Meier with death treated as censoring, because no death table is
-#      wired yet. That biases OUR observed risk upward, and therefore our slope upward. It is the
-#      single biggest methodological gap in this comparison and it is not a rounding issue.
+#      event. Since 2026-11-08 ours is Aalen-Johansen with death of ANY cause as the competing
+#      event, using EHR death records that are incomplete and carry no cause. So a fatal ASCVD event
+#      with no diagnosis code counts as a competing death, which biases OUR observed risk downward.
 # ------------------------------------------------------------------------------------------------
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
@@ -339,7 +339,7 @@ make_paper_table1 <- function(res, events_from = c("acute", "broad"), min_cell =
          }),
     list("Total CVD events",            "events_cvd",    na_("HF not ascertained")),
     list("HF events",                   "events_hf",     na_("HF not ascertained")),
-    list("Deaths",                      "deaths",        na_("death table not wired")))
+    list("Deaths",                      "deaths",        na_("EHR deaths are not comparable")))
 
   rows <- lapply(spec, function(s) {
     label <- s[[1]]; key <- s[[2]]; fn <- s[[3]]
@@ -373,7 +373,7 @@ make_paper_table1 <- function(res, events_from = c("acute", "broad"), min_cell =
     "Race: PREVENT is race-free and the panel does not carry race, so their race rows have no counterpart here.",
     "UACR and SDI are not extracted (they are novel-predictor inputs, not base-model inputs).",
     "Total CVD and HF events: we ascertain ASCVD only, so those rows are theirs alone.",
-    "Deaths: no death table is wired, which is also why our KM treats death as censoring.",
+    "Deaths: left blank because our death table holds EHR records only, which are incomplete and have no cause.",
     sprintf("Counts under %d are suppressed, and statistics derived from a suppressed count are blanked.",
             min_cell))
   attr(tab, "n_by_sex") <- n_sex

@@ -1,6 +1,6 @@
 # survival_curves.R — one-shot survival-curve driver for the All of Us Workbench. T-021.
 #
-# PURPOSE: produce Kaplan-Meier curves for incident ASCVD, plus the NUMBERS behind them, in one call,
+# PURPOSE: produce cumulative-incidence curves for incident ASCVD, plus the NUMBERS behind them, in one call,
 # without the caller having to know the landmark, the CDR cutoff, or which figure depends on which
 # unresolved question.
 #
@@ -29,10 +29,11 @@
 # cohort would be wrong.
 #
 # It is PRELIMINARY in three named ways, all printed with the readout so they reach the slide:
-#   1. Death is not wired in — competing risk is treated as censoring, which OVERSTATES incidence.
-#      (Still true of THIS driver. The poster route, src/workbench/03_mice.R, builds its cohort with
-#      attach_death = TRUE and estimates observed risk by Aalen-Johansen — D-021, 2026-09-29. The
-#      curves here are Kaplan-Meier and must keep saying so until km_at() is moved over with them.)
+#   1. Death is a COMPETING EVENT and observed risk is Aalen-Johansen (D-021; this driver moved over
+#      on 2026-11-08, matching the poster route in src/workbench/03_mice.R). Deaths come from EHR
+#      records and carry no cause, so some are missed and a fatal ASCVD event with no diagnosis code
+#      counts as a competing death: both bias observed risk DOWN. attach_death = FALSE restores the
+#      old Kaplan-Meier curves, and every label then says Kaplan-Meier.
 #   2. Outcome codes: ICD-10-CM, ICD-9-CM, SNOMED CT, CPT and ICD-9 procedures since 2026-11-08 (it
 #      was ICD10CM-only, which hid pre-~Oct-2015 events). Early years still depend on how far back
 #      each site's EHR goes; the SNOMED subtree is reviewed in check_ascvd_events() Layer 2.
@@ -200,25 +201,19 @@ describe_followup <- function(fr, at_risk = fr$at_risk) {
 #' @param at_risk  the frame from ascvd_status_at() (NA `event` rows are excluded — those are the
 #'   prevalent and short-interval exclusions, which must not enter a denominator).
 #' @param times    horizons in YEARS.
-#' @return data.frame(years, n_risk, n_event, cuminc_pct, lower_pct, upper_pct)
-km_at <- function(at_risk, times = c(1, 2, 3, 4, 5), group = NULL) {
-  d <- at_risk[!is.na(at_risk$event) & !is.na(at_risk$followup_days) & at_risk$followup_days >= 0, ]
-  if (!nrow(d)) return(NULL)
-  f <- if (is.null(group)) survival::Surv(d$followup_days, d$event) ~ 1 else
-       stats::as.formula(sprintf("survival::Surv(followup_days, event) ~ %s", group))
-  fit <- survival::survfit(f, data = d)
-  s <- summary(fit, times = times * 365.25, extend = TRUE)
-  strata <- if (is.null(s$strata)) rep("all", length(s$time)) else
-            sub("^[^=]*=", "", as.character(s$strata))
-  # survfit's `upper` is an upper bound on SURVIVAL, so it becomes the LOWER bound on cumulative
-  # incidence. Flipping these is a classic and completely silent error.
-  data.frame(strata = strata,
-             years      = round(s$time / 365.25, 2),
-             n_risk     = s$n.risk,
-             n_event    = s$n.event,
-             cuminc_pct = round(100 * (1 - s$surv), 2),
-             lower_pct  = round(100 * (1 - s$upper), 2),
-             upper_pct  = round(100 * (1 - s$lower), 2),
+#' @return data.frame(strata, years, n_risk, n_event, cuminc_pct, lower_pct, upper_pct, estimator);
+#'   see cumulative_incidence() in extract_death.R, which does the estimating.
+cuminc_at <- function(at_risk, times = c(1, 2, 3, 4, 5), group = NULL) {
+  ci <- cumulative_incidence(at_risk, group = group, times_days = times * 365.25)
+  if (is.null(ci)) return(NULL)
+  data.frame(strata = ci$strata,
+             years      = round(ci$time_days / 365.25, 2),
+             n_risk     = ci$n_risk,
+             n_event    = ci$n_event,
+             cuminc_pct = round(ci$cuminc_pct, 2),
+             lower_pct  = round(ci$lower_pct, 2),
+             upper_pct  = round(ci$upper_pct, 2),
+             estimator  = ci$estimator,
              stringsAsFactors = FALSE)
 }
 
@@ -231,6 +226,8 @@ km_at <- function(at_risk, times = c(1, 2, 3, 4, 5), group = NULL) {
 #'   the old DERIVED landmark, call choose_landmark() yourself and pass its $landmark.
 #' @param earliest_panel_date  per-person mode: ignore measurements before this date (NULL = no
 #'   floor, the default since ICD-9/SNOMED were added; see build_incidence_frame()). Not a follow-up rule.
+#' @param attach_death  TRUE (default since 2026-11-08) ends follow-up at death and estimates observed
+#'   risk by Aalen-Johansen (D-021). FALSE reproduces the earlier Kaplan-Meier curves.
 #' @param outdir  where the PNGs go.
 #' @param copy_to_bucket  gsutil the PNGs to WORKSPACE_BUCKET/figures/ when running in the Workbench.
 #' @param refresh  re-source the pipeline files even if they appear to be loaded already. TRUE by
@@ -248,7 +245,7 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
                                 scorable_only = TRUE,
                                 horizons = c(1, 2, 3, 4, 5),
                                 copy_to_bucket = TRUE, refresh = TRUE,
-                                earliest_panel_date = NULL) {
+                                earliest_panel_date = NULL, attach_death = TRUE) {
   if (isTRUE(refresh) || !exists("make_incidence_figures", mode = "function"))
     source_survival_deps(quiet = TRUE)
   # Fail on a STALE signature with a message that names the cause. Without this the symptom is
@@ -297,9 +294,11 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
                                scorable_only = scorable_only,
                                attach_smoking_status = attach_smoking_status,
                                min_days_panel_to_event = min_days_panel_to_event,
-                               earliest_panel_date = earliest_panel_date)
+                               earliest_panel_date = earliest_panel_date,
+                               attach_death = attach_death)
   fu_desc <- describe_followup(fr)
   say("  follow-up                 : %s", fu_desc)
+  say("  death                     : %s", fr$death_source)
 
   say("\n=== 3. attrition ===")
   print(fr$counts)
@@ -308,9 +307,12 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
   # now is the difference between fixing it in-session and re-running the whole cohort.
   if (!is.null(fr$prevent_source)) say("\nPREVENT: %s", fr$prevent_source)
 
-  km       <- km_at(fr$at_risk,       horizons)
-  km_acute <- km_at(fr$at_risk_acute, horizons)
-  km_sex   <- if ("sex" %in% names(fr$at_risk)) km_at(fr$at_risk, horizons, group = "sex") else NULL
+  # The `km*` names are kept because export_validation_summary.R reads them; each row's `estimator`
+  # column says what was actually computed.
+  km       <- cuminc_at(fr$at_risk,       horizons)
+  km_acute <- cuminc_at(fr$at_risk_acute, horizons)
+  km_sex   <- if ("sex" %in% names(fr$at_risk)) cuminc_at(fr$at_risk, horizons, group = "sex") else NULL
+  death_competing <- has_competing_status(fr$at_risk)
 
   say("\n=== 4. cumulative incidence — ALL ASCVD (D-016 primary outcome) ===")
   print(km)
@@ -345,13 +347,18 @@ run_survival_curves <- function(con = NULL, outdir = "figures",
     sprintf("baseline: %s -> end_of_followup %s", fr$baseline_rule, format(end_of_followup)),
     sprintf("follow-up: %s", fu_desc),
     sprintf("smoking: %s", fr$smoking_source),
+    sprintf("death: %s", fr$death_source),
+    sprintf("estimator: %s", if (death_competing) "Aalen-Johansen (death is a competing event)"
+                             else "Kaplan-Meier (death treated as censoring)"),
     sprintf("30-day panel-to-event rule (D-017): %d days", min_days_panel_to_event),
     "", "-- attrition --", utils::capture.output(print(fr$counts)),
     "", "-- cumulative incidence, ALL ASCVD --", utils::capture.output(print(km)),
     "", "-- cumulative incidence, ACUTE ONLY --", utils::capture.output(print(km_acute)),
     if (!is.null(km_sex)) c("", "-- by sex --", utils::capture.output(print(km_sex))),
     "", "-- caveats that belong on the slide --",
-    "1. death not wired in: competing risk treated as censoring -> incidence OVERSTATED",
+    if (death_competing)
+      "1. death is a competing event, but EHR deaths are incomplete and have no cause -> incidence biased DOWN"
+    else "1. death not wired in: competing risk treated as censoring -> incidence OVERSTATED",
     "2. outcome = ICD-10 + ICD-9 + SNOMED + CPT/ICD-9 procedures; early years limited by EHR depth",
     "3. censored at the CDR cutoff, not last contact -> person-time inflated, rate pushed DOWN",
     "4. Q-S6 baseline anchor open: figures 14/15/17 are anchor-free; figure 16 is PROVISIONAL"),
